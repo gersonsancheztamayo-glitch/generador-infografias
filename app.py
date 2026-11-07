@@ -6,7 +6,6 @@ Backend Flask: recibe texto en sucio y lo convierte en JSON estructurado con Cla
 import json
 import logging
 import os
-import re
 from pathlib import Path
 
 import anthropic
@@ -30,7 +29,7 @@ app = Flask(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 if client is None:
-    log.warning("ANTHROPIC_API_KEY no está definida: /api/generar devolverá error 500.")
+    log.warning("Sin ANTHROPIC_API_KEY: la web funciona en modo gratis (copiar/pegar con Claude Pro).")
 
 
 # --------------------------------------------------------------------------
@@ -160,7 +159,8 @@ Reglas:
 - Español neutro de Perú, directo, en segunda persona ("Mantén", "Verifica", "Escala").
 - Respeta los términos técnicos y siglas del texto tal como vienen (TCP, TCE, OFSC, NAP, ONT, etc.).
 - No inventes datos (valores, metrajes, normas, teléfonos) que no estén en el texto.
-- Divide el contenido en 1 a 6 secciones temáticas; cada una se numera automáticamente.
+- Divide el contenido en 1 a 6 secciones temáticas (ideal: 3 o 4, para que se lea bien en el celular);
+  cada una se numera automáticamente.
 - Sé breve: las infografías se leen en segundos. Prefiere viñetas cortas a párrafos.
 - Varía los colores de las secciones (azul, verde, morado, naranja…). Usa "rojo" solo para \
 prohibiciones o errores.
@@ -222,7 +222,8 @@ def construir_prompt(texto: str) -> str:
     """Prompt completo para pegar en claude.ai (modo sin API)."""
     return f"""{SYSTEM_PROMPT}
 FORMATO DE RESPUESTA (obligatorio):
-Responde ÚNICAMENTE con un bloque de código ```json, sin ningún texto antes ni después.
+Responde ÚNICAMENTE con un bloque de código ```json escrito directamente en el chat (no crees un artefacto,
+un documento ni un archivo), sin ningún texto antes ni después.
 Usa exactamente estos nombres de campos (este es solo un ejemplo de la estructura, no de su contenido):
 
 ```json

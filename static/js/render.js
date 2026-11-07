@@ -107,7 +107,7 @@ function htmlPuntos(s, i) {
 
 function htmlChips(s, i, enFila) {
   if (!s.chips?.length) return "";
-  return `<div class="${enFila ? "grid grid-cols-2" : "flex flex-col"}" style="gap:12px;${enFila ? "margin-top:18px" : ""}">
+  return `<div class="${enFila ? "grid" : "flex flex-col"}" style="gap:12px;${enFila ? "margin-top:18px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))" : ""}">
     ${s.chips.map((c, j) => `
       <div class="chip flex items-center" style="gap:14px;padding:10px 18px 10px 10px">
         <span class="chip-ic">${icono(c.icono, "#fff", 30)}</span>
@@ -177,13 +177,13 @@ function htmlVerificacion(v) {
   if (!v?.items?.length) return "";
   return `
   <section class="verif flex items-center" style="border-radius:30px;padding:24px 30px;gap:28px">
-    <div class="flex items-center" style="gap:18px;width:330px;flex:none">
+    <div class="flex items-center" style="gap:18px;width:290px;flex:none">
       <span class="flex items-center justify-center rounded-full" style="width:88px;height:88px;background:#13a150;flex:none">${icono("_check", "#fff", 54, { sw: 3.2 })}</span>
       ${ed("verificacion.titulo", v.titulo, "span", `class="display font-extrabold uppercase" style="font-size:28px;line-height:1.1;color:#0a7038"`)}
     </div>
-    <div class="flex flex-1" style="gap:0">
+    <div class="grid flex-1" style="grid-template-columns:repeat(${v.items.length <= 4 ? v.items.length : 3},minmax(0,1fr));row-gap:18px">
       ${v.items.map((it, j) => `
-        <div class="flex-1 flex flex-col items-center text-center" style="padding:0 10px;${j ? "border-left:2px solid #b5dfc8;" : ""}">
+        <div class="flex flex-col items-center text-center" style="padding:0 10px;${j % (v.items.length <= 4 ? 4 : 3) ? "border-left:2px solid #b5dfc8;" : ""}">
           <div class="relative" style="margin-bottom:10px">
             ${icono(it.icono, "#1746d4", 58, { sw: 1.7 })}
             <span class="absolute flex items-center justify-center rounded-full" style="right:-12px;bottom:-6px;width:28px;height:28px;background:#13a150;border:3px solid #fff">${icono("_check", "#fff", 15, { sw: 4 })}</span>
@@ -194,17 +194,18 @@ function htmlVerificacion(v) {
   </section>`;
 }
 
-function htmlImportante(lista) {
+function htmlImportante(lista, op) {
   if (!lista?.length) return "";
+  const apilar = op.formato !== "horizontal" && (lista.length > 2 || lista.some((it) => it.texto.length > 55));
   return `
   <section class="imp flex items-center" style="border-radius:30px;padding:22px 30px;gap:24px">
-    <div class="flex items-center" style="gap:16px;flex:none">
+    <div class="flex ${apilar ? "flex-col text-center" : ""} items-center" style="gap:${apilar ? 6 : 16}px;flex:none;${apilar ? "width:200px" : ""}">
       ${icono("alerta", "#e02424", 76, { sw: 2.2 })}
       <span class="display font-black uppercase" style="font-size:32px;color:#d01c1c">Importante</span>
     </div>
-    <div class="flex flex-1">
+    <div class="flex flex-1 ${apilar ? "flex-col" : ""}">
       ${lista.map((it, j) => `
-        <div class="flex-1 flex items-center" style="gap:14px;padding:0 18px;${j ? "border-left:2px solid #f0b3b3;" : ""}">
+        <div class="flex-1 flex items-center" style="gap:14px;${apilar ? `padding:12px 6px;${j ? "border-top:2px solid #f0b3b3;" : ""}` : `padding:0 18px;${j ? "border-left:2px solid #f0b3b3;" : ""}`}">
           ${it.tipo === "no" ? icono("prohibido", "#e02424", 46, { sw: 2.4 }) : icono("check", "#13a150", 46, { sw: 2.4 })}
           ${ed(`importante.${j}.texto`, it.texto, "span", `class="font-semibold" style="font-size:22px;line-height:1.25"`)}
         </div>`).join("")}
@@ -249,7 +250,7 @@ function renderInfografia(datos, op) {
         ${datos.secciones.map((s, i) => htmlSeccion(s, i, n, modo)).join("")}
       </div>
       ${htmlVerificacion(datos.verificacion)}
-      ${htmlImportante(datos.importante)}
+      ${htmlImportante(datos.importante, op)}
       <div class="flex-1"></div>
     </main>
     ${htmlPie(datos, op)}
@@ -261,10 +262,12 @@ function ajustarTitulos(raiz) {
   raiz.querySelectorAll(".fit").forEach((el) => {
     let size = Number(el.dataset.max) || 90;
     el.style.fontSize = size + "px";
-    while (el.scrollWidth > el.clientWidth && size > 38) {
+    el.style.whiteSpace = "nowrap";
+    while (el.scrollWidth > el.clientWidth && size > 46) {
       size -= 2;
       el.style.fontSize = size + "px";
     }
+    if (el.scrollWidth > el.clientWidth) el.style.whiteSpace = "normal"; // título muy largo: 2 renglones
   });
 }
 

@@ -94,13 +94,39 @@ const lienzo = $("#lienzo");
 const escala = $("#escala");
 const marco = $("#marco");
 
-function render() {
+function render({ guardarHistorial = true } = {}) {
   datos.secciones ||= [];
   lienzo.innerHTML = Render.renderInfografia(datos, opciones);
   Render.ajustarTitulos(lienzo);
   ajustarEscala();
   guardarLocal();
+  if (guardarHistorial) registrarHistorial();
 }
+
+/* ---------- deshacer (guarda los últimos 30 cambios) ---------- */
+const historial = [];
+function registrarHistorial() {
+  const foto = JSON.stringify(datos);
+  if (foto === historial.at(-1)) return;
+  historial.push(foto);
+  if (historial.length > 30) historial.shift();
+  $("#btn-deshacer").disabled = historial.length < 2;
+}
+function deshacer() {
+  if (historial.length < 2) return aviso("No hay más cambios para deshacer.", "info");
+  historial.pop();
+  datos = JSON.parse(historial.at(-1));
+  render({ guardarHistorial: false });
+  $("#btn-deshacer").disabled = historial.length < 2;
+}
+$("#btn-deshacer").addEventListener("click", deshacer);
+document.addEventListener("keydown", (e) => {
+  const escribiendo = e.target.closest("input, textarea, [contenteditable]");
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !escribiendo) {
+    e.preventDefault();
+    deshacer();
+  }
+});
 
 function ajustarEscala() {
   const info = $("#infografia");
@@ -111,7 +137,12 @@ function ajustarEscala() {
   escala.style.transform = `scale(${k})`;
   escala.style.width = ancho + "px";
   marco.style.height = info.offsetHeight * k + "px";
-  $("#dimensiones").textContent = `${ancho} × ${info.offsetHeight} px`;
+  const ideal = ancho === 1080 ? 1620 : 1080; // proporción 2:3 o 3:2
+  const larga = info.offsetHeight > ideal * 1.6;
+  const dim = $("#dimensiones");
+  dim.textContent = `${ancho} × ${info.offsetHeight} px` + (larga ? " · ⚠ muy larga para celular" : "");
+  dim.className = `font-mono text-xs border rounded px-2 py-1 ${larga ? "bg-amber-50 border-amber-300 text-amber-800" : "bg-white border-slate-200"}`;
+  dim.title = larga ? "Se leerá con letra pequeña en WhatsApp. Resume textos, quita secciones o usa formato horizontal." : "";
 }
 new ResizeObserver(ajustarEscala).observe(marco);
 
@@ -223,7 +254,7 @@ lienzo.addEventListener("focusout", (e) => {
   const valor = el.innerText.replace(/\s+/g, " ").trim();
   const reRender = asignarRuta(datos, el.dataset.path, valor);
   if (reRender || el.closest(".fit")) render();
-  else guardarLocal();
+  else { guardarLocal(); registrarHistorial(); }
 });
 
 lienzo.addEventListener("keydown", (e) => {
@@ -437,6 +468,7 @@ $("#btn-pegar").addEventListener("click", () => {
   }
   render();
   $("#respuesta").value = "";
+  if (innerWidth < 1024) $("#marco").scrollIntoView({ behavior: "smooth" });
   aviso("✅ Infografía creada. Haz clic en los textos para corregirlos, añade fotos si quieres y pulsa «Descargar PNG».", "ok");
 });
 
@@ -523,6 +555,23 @@ $("#btn-descargar").addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
     btn.querySelector("span").textContent = "Descargar PNG";
+  }
+});
+
+/* ---------- compartir (celular: WhatsApp, Telegram, etc.) ---------- */
+const btnCompartir = $("#btn-compartir");
+const puedeCompartir = !!navigator.canShare?.({ files: [new File([""], "x.png", { type: "image/png" })] });
+btnCompartir.hidden = !puedeCompartir;
+btnCompartir.addEventListener("click", async () => {
+  btnCompartir.disabled = true;
+  try {
+    const canvas = await exportarPNG();
+    const blob = await new Promise((ok) => canvas.toBlob(ok, "image/png"));
+    await navigator.share({ files: [new File([blob], nombreArchivo(), { type: "image/png" })] });
+  } catch (err) {
+    if (err.name !== "AbortError") aviso("No se pudo compartir: " + err.message + ". Usa «Descargar PNG».", "error");
+  } finally {
+    btnCompartir.disabled = false;
   }
 });
 

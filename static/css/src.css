@@ -40,7 +40,7 @@
   .chip { background: var(--s); border-radius: 18px; }
   .chip-ic { flex: none; width: 56px; height: 56px; border-radius: 9999px; background: var(--c);
              display: flex; align-items: center; justify-content: center; }
-  .tile { background: var(--s); border-radius: 28px; border: 3px dashed var(--b); }
+  .tile { background: var(--s); border-radius: 28px; }
   .foto { border: 5px solid #fff; border-radius: 22px; box-shadow: 0 8px 20px -8px rgba(8,30,110,.45); }
   .dest { background: var(--ds); border: 2px solid var(--db); border-radius: 18px; }
   .dest-ic { flex: none; width: 54px; height: 54px; border-radius: 9999px; background: var(--dc);
@@ -54,6 +54,7 @@
   /* Controles de edición (NO se exportan: llevan data-html2canvas-ignore) */
   .ctrl { opacity: 0; transition: opacity .15s; }
   .sec:hover .ctrl, .ctrl:focus-within { opacity: 1; }
+  @media (hover: none) { .ctrl { opacity: 1; } } /* celular/tablet: sin mouse, controles siempre visibles */
   .ctrl button, .add-btn { background: #fff; color: #1e3a8a; border: 1px solid #c7d2fe; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
   .ctrl button:hover, .add-btn:hover { background: #eef2ff; }
   .info [contenteditable]:hover { outline: 2px dashed rgba(59,130,246,.55); outline-offset: 3px; border-radius: 4px; cursor: text; }
