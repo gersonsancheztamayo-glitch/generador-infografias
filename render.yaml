@@ -1,0 +1,21 @@
+# Configuración de despliegue en Render (Blueprint)
+# https://render.com/docs/yaml-spec
+services:
+  - type: web
+    name: generador-infografias
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # --timeout 120: la IA puede tardar más de 30 s (el límite por defecto de gunicorn)
+    startCommand: gunicorn app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-5-5
+      - key: MAX_INPUT_CHARS
+        value: "8000"
+      - key: ANTHROPIC_API_KEY
+        sync: false # Render te la pedirá al crear el servicio (no se guarda en GitHub)
