@@ -6,6 +6,14 @@ Herramienta web para convertir texto en sucio en infografías de capacitación t
 - **Frontend:** HTML + Tailwind CSS (`templates/index.html`, `static/js/render.js`).
 - **Exportación:** html2canvas-pro (`static/vendor/`) para generar el PNG en el navegador.
 
+## Dos formas de generar el contenido
+
+1. **Gratis con Claude Pro (sin API):** pega tu texto → «Copiar prompt» → pégalo en claude.ai
+   (puedes adjuntar imágenes de referencia) → copia la respuesta → «Crear infografía».
+   La web repara automáticamente errores menores de la respuesta.
+2. **Con API (opcional):** añade `ANTHROPIC_API_KEY` en Render → Environment y se activa
+   «Generar con IA» en un clic. Consume saldo de la API de Anthropic (se cobra aparte del plan Pro).
+
 ## Estructura
 
 ```
@@ -42,6 +50,6 @@ npm run build:css
 
 | Variable | Descripción | Por defecto |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Clave de la API de Anthropic (obligatoria) | — |
+| `ANTHROPIC_API_KEY` | Clave de la API de Anthropic (opcional: activa «Generar con IA») | — |
 | `CLAUDE_MODEL` | Modelo a usar | `claude-sonnet-5-5` |
 | `MAX_INPUT_CHARS` | Máximo de caracteres del texto de entrada | `8000` |

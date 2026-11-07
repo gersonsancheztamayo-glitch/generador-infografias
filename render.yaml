@@ -17,5 +17,5 @@ services:
         value: claude-sonnet-5-5
       - key: MAX_INPUT_CHARS
         value: "8000"
-      - key: ANTHROPIC_API_KEY
-        sync: false # Render te la pedirá al crear el servicio (no se guarda en GitHub)
+      # Opcional: para activar «Generar con IA», añade ANTHROPIC_API_KEY en
+      # Render → tu servicio → Environment. Sin ella, la web usa el modo gratis (copiar/pegar con Claude Pro).

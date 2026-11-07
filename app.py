@@ -187,10 +187,83 @@ def health():
     return jsonify(status="ok", modelo=CLAUDE_MODEL, api_key_configurada=client is not None)
 
 
+@app.route("/api/config")
+def config():
+    """Le dice al navegador si el botón 'Generar con IA' está disponible."""
+    return jsonify(api=client is not None, max_caracteres=MAX_INPUT_CHARS)
+
+
+# Ejemplo que se incluye en el prompt del modo sin API (muestra la estructura exacta)
+EJEMPLO_JSON = {
+    "titulo_linea1": "REGLAS CLAVE PARA",
+    "titulo_linea2": "TENDIDOS EXTERNOS",
+    "subtitulo": "Instalaciones seguras, estandarizadas y con calidad.",
+    "secciones": [
+        {
+            "titulo": "RESPETA LA PRIORIDAD DE POSTES",
+            "color": "azul",
+            "icono": "poste",
+            "descripcion": "Utiliza siempre el orden establecido.",
+            "puntos": ["Primero los postes propios.", "Luego los autorizados."],
+            "chips": [{"icono": "seguridad", "texto": "Mayor seguridad"}],
+            "destacado": {"tipo": "error", "texto": "No utilizar postes no autorizados."},
+        }
+    ],
+    "verificacion": {
+        "titulo": "ANTES DE CERRAR, VERIFICA",
+        "items": [{"icono": "poste", "texto": "Prioridad de postes"}, {"icono": "camara", "texto": "Evidencias"}],
+    },
+    "importante": [{"tipo": "no", "texto": "No considerar postes no autorizados."}],
+    "lema": "La calidad comienza antes de llegar al cliente.",
+}
+
+
+def construir_prompt(texto: str) -> str:
+    """Prompt completo para pegar en claude.ai (modo sin API)."""
+    return f"""{SYSTEM_PROMPT}
+FORMATO DE RESPUESTA (obligatorio):
+Responde ÚNICAMENTE con un bloque de código ```json, sin ningún texto antes ni después.
+Usa exactamente estos nombres de campos (este es solo un ejemplo de la estructura, no de su contenido):
+
+```json
+{json.dumps(EJEMPLO_JSON, ensure_ascii=False, indent=2)}
+```
+
+Reglas del JSON:
+- "titulo_linea1" y "titulo_linea2": MAYÚSCULAS, máx. 24 caracteres cada una.
+- "secciones": de 1 a 6. "titulo" en MAYÚSCULAS (máx. 32 caracteres), "puntos": máx. 5 de máx. 70 caracteres.
+- "color": uno de {", ".join(COLORES)}.
+- "icono" (en secciones, chips y verificación): uno de {", ".join(ICONOS)}.
+- "destacado.tipo": ok, alerta, error o info.
+- "importante[].tipo": "no" (prohibición) o "si" (obligación).
+- Opcionales (omítelos si no aplican): "chips", "destacado", "verificacion", "importante".
+
+Si junto a este mensaje hay imágenes adjuntas (capturas, fotos, infografías antiguas), úsalas como
+fuente de contenido junto con el texto: extrae de ellas los pasos, datos y advertencias relevantes.
+
+TEXTO A CONVERTIR:
+<texto>
+{texto}
+</texto>"""
+
+
+@app.route("/api/prompt", methods=["POST"])
+def prompt():
+    data = request.get_json(silent=True) or {}
+    texto = (data.get("texto") or "").strip()
+    if len(texto) > MAX_INPUT_CHARS:
+        return jsonify(error=f"El texto supera el máximo de {MAX_INPUT_CHARS} caracteres."), 400
+    # Sin texto también vale: el contenido puede venir solo de imágenes adjuntas en claude.ai
+    return jsonify(prompt=construir_prompt(texto or "(Sin texto: usa el contenido de las imágenes adjuntas.)"))
+
+
 @app.route("/api/generar", methods=["POST"])
 def generar():
     if client is None:
-        return jsonify(error="El servidor no tiene configurada la API key de Anthropic."), 500
+        return jsonify(
+            error="«Generar con IA» necesita una API key de Anthropic (variable ANTHROPIC_API_KEY en Render). "
+            "Mientras tanto, usa el modo gratuito con tu Claude Pro: pasos 2 y 3."
+        ), 503
 
     data = request.get_json(silent=True) or {}
     texto = (data.get("texto") or "").strip()

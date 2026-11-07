@@ -123,9 +123,69 @@ function aviso(texto, tipo = "info") {
     ok: "bg-green-50 text-green-900 border-green-200",
     error: "bg-red-50 text-red-900 border-red-200",
   };
-  el.className = `rounded-xl border px-4 py-3 text-sm ${estilos[tipo]}`;
+  el.className = `fixed z-50 bottom-4 left-4 right-4 sm:right-auto sm:max-w-md rounded-xl border px-4 py-3 text-sm shadow-lg cursor-pointer ${estilos[tipo]}`;
+  el.title = "Clic para cerrar";
   el.textContent = texto;
   el.hidden = !texto;
+}
+
+$("#aviso").addEventListener("click", () => ($("#aviso").hidden = true));
+
+/* ---------- normalizar: repara pequeños errores del JSON que devuelve la IA ---------- */
+function extraerJSON(textoRespuesta) {
+  let t = textoRespuesta.trim();
+  const bloque = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (bloque) t = bloque[1];
+  const ini = t.indexOf("{"), fin = t.lastIndexOf("}");
+  if (ini === -1 || fin <= ini) throw new Error("no encontré ningún bloque JSON");
+  t = t.slice(ini, fin + 1);
+  try {
+    return JSON.parse(t);
+  } catch {
+    // Reparaciones comunes: comillas tipográficas y comas sobrantes
+    return JSON.parse(t.replace(/[\u201C\u201D]/g, '"').replace(/,\s*([}\]])/g, "$1"));
+  }
+}
+
+function normalizar(d) {
+  if (d && typeof d === "object" && !d.secciones && (d.infografia || d.data)) d = d.infografia || d.data;
+  if (!d || !Array.isArray(d.secciones) || !d.secciones.length) throw new Error("falta la lista de secciones");
+  const str = (v) => (typeof v === "string" ? v.trim() : v == null ? "" : String(v));
+  const icono = (v) => (window.ICONOS[v] && !String(v).startsWith("_") ? v : "info");
+  const lista = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+  const conTexto = (v) => (typeof v === "string" ? { texto: v } : v || {});
+
+  if (!d.titulo_linea1 && d.titulo) {
+    const p = str(d.titulo).split(/\s+/), m = Math.ceil(p.length / 2);
+    d.titulo_linea1 = p.slice(0, m).join(" ");
+    d.titulo_linea2 = p.slice(m).join(" ");
+  }
+  const out = {
+    titulo_linea1: str(d.titulo_linea1).toUpperCase(),
+    titulo_linea2: str(d.titulo_linea2).toUpperCase(),
+    subtitulo: str(d.subtitulo),
+    secciones: d.secciones.slice(0, 6).map((s, i) => {
+      const sec = {
+        titulo: str(s.titulo),
+        color: Render.PALETA[s.color] ? s.color : Render.ORDEN_COLORES[i % Render.ORDEN_COLORES.length],
+        icono: icono(s.icono),
+        descripcion: str(s.descripcion),
+        puntos: lista(s.puntos).map((p) => str(typeof p === "object" ? p.texto : p)).filter(Boolean),
+      };
+      const chips = lista(s.chips).map(conTexto).filter((c) => c.texto).map((c) => ({ icono: icono(c.icono), texto: str(c.texto) }));
+      if (chips.length) sec.chips = chips;
+      const dst = conTexto(s.destacado);
+      if (dst.texto) sec.destacado = { tipo: Render.DESTACADO[dst.tipo] ? dst.tipo : "info", texto: str(dst.texto) };
+      return sec;
+    }),
+    lema: str(d.lema),
+  };
+  const v = Array.isArray(d.verificacion) ? { titulo: "Antes de cerrar, verifica", items: d.verificacion } : d.verificacion;
+  const items = lista(v?.items).map(conTexto).filter((c) => c.texto).map((c) => ({ icono: icono(c.icono), texto: str(c.texto) }));
+  if (items.length) out.verificacion = { titulo: str(v.titulo) || "Antes de cerrar, verifica", items };
+  const imp = lista(d.importante).map(conTexto).filter((c) => c.texto).map((c) => ({ tipo: c.tipo === "si" ? "si" : "no", texto: str(c.texto) }));
+  if (imp.length) out.importante = imp;
+  return out;
 }
 
 /* ---------- edición de textos (clic sobre la infografía) ---------- */
@@ -293,9 +353,19 @@ const contador = () => ($("#contador").textContent = `${texto.value.length} / ${
 texto.addEventListener("input", contador);
 contador();
 
+let hayAPI = false;
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  hayAPI = c.api;
+  $("#estado-api").textContent = hayAPI
+    ? "✅ API de Anthropic conectada: genera en un clic (consume saldo de la API)."
+    : "🔒 «Generar con IA» necesita una API key de Anthropic (ANTHROPIC_API_KEY en Render). Sin ella, usa los pasos 2 y 3: gratis con tu Claude Pro.";
+}).catch(() => {});
+
 $("#btn-generar").addEventListener("click", async () => {
   const contenido = texto.value.trim();
-  if (!contenido) return aviso("Pega o escribe primero el texto de la capacitación.", "error");
+  if (!hayAPI)
+    return aviso("Esta opción necesita una API key de Anthropic configurada en Render (variable ANTHROPIC_API_KEY). Por ahora usa el modo gratis: pulsa «Copiar prompt» (paso 2).", "error");
+  if (!contenido) return aviso("Falta el texto: pégalo en el paso 1.", "error");
 
   const btn = $("#btn-generar");
   btn.disabled = true;
@@ -310,7 +380,7 @@ $("#btn-generar").addEventListener("click", async () => {
     });
     const json = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(json.error || `Error ${r.status}`);
-    datos = json;
+    datos = normalizar(json);
     render();
     aviso("¡Listo! Haz clic en cualquier texto para corregirlo antes de descargar.", "ok");
   } catch (err) {
@@ -319,6 +389,55 @@ $("#btn-generar").addEventListener("click", async () => {
     btn.disabled = false;
     btn.querySelector("span").textContent = "Generar con IA";
   }
+});
+
+async function copiarAlPortapapeles(t) {
+  try {
+    await navigator.clipboard.writeText(t);
+  } catch {
+    const ta = Object.assign(document.createElement("textarea"), { value: t });
+    ta.style.cssText = "position:fixed;opacity:0";
+    document.body.append(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    if (!ok) throw new Error("el navegador bloqueó el portapapeles");
+  }
+}
+
+$("#btn-copiar").addEventListener("click", async () => {
+  const contenido = texto.value.trim();
+  try {
+    const r = await fetch("/api/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texto: contenido }),
+    });
+    const json = await r.json();
+    if (!r.ok) throw new Error(json.error);
+    await copiarAlPortapapeles(json.prompt);
+    aviso(
+      contenido
+        ? "✅ Prompt copiado. Ahora: abre claude.ai → pega (Ctrl+V) → envía. Puedes adjuntar imágenes de referencia. Luego copia toda la respuesta y pégala en el paso 3."
+        : "✅ Prompt copiado SIN texto: en claude.ai adjunta las imágenes de referencia (capturas, fotos, infografías) antes de enviar. Luego pega la respuesta en el paso 3.",
+      "ok"
+    );
+  } catch (err) {
+    aviso("No se pudo copiar el prompt: " + err.message, "error");
+  }
+});
+
+$("#btn-pegar").addEventListener("click", () => {
+  const r = $("#respuesta").value.trim();
+  if (!r) return aviso("Falta la respuesta de Claude: cópiala de claude.ai y pégala en el paso 3.", "error");
+  try {
+    datos = normalizar(extraerJSON(r));
+  } catch (err) {
+    return aviso(`No pude leer la respuesta (${err.message}). Asegúrate de copiar la respuesta COMPLETA de Claude, incluido el bloque \`\`\`json.`, "error");
+  }
+  render();
+  $("#respuesta").value = "";
+  aviso("✅ Infografía creada. Haz clic en los textos para corregirlos, añade fotos si quieres y pulsa «Descargar PNG».", "ok");
 });
 
 $("#btn-add-seccion").addEventListener("click", () => {
@@ -345,7 +464,7 @@ $("#panel-json").addEventListener("toggle", (e) => {
 });
 $("#btn-json").addEventListener("click", () => {
   try {
-    const nuevo = JSON.parse($("#json").value);
+    const nuevo = normalizar(JSON.parse($("#json").value));
     // Conserva las fotos de las secciones por posición
     (nuevo.secciones || []).forEach((s, i) => { if (datos.secciones[i]?._img) s._img = datos.secciones[i]._img; });
     datos = nuevo;
