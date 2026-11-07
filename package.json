@@ -1,0 +1,12 @@
+{
+  "name": "generador-infografias",
+  "private": true,
+  "description": "Solo para regenerar el CSS de Tailwind. Render NO necesita Node: app.css ya va compilado en el repo.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/css/src.css -o ./static/css/app.css --minify",
+    "watch:css": "tailwindcss -i ./static/css/src.css -o ./static/css/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

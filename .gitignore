@@ -12,3 +12,6 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# Node (solo para recompilar Tailwind)
+node_modules/

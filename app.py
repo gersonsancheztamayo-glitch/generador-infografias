@@ -3,12 +3,15 @@ Generador de Infografías Técnicas
 Backend Flask: recibe texto en sucio y lo convierte en JSON estructurado con Claude.
 """
 
-import os
+import json
 import logging
+import os
+import re
+from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
-from dotenv import load_dotenv
 import anthropic
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
 
 # --------------------------------------------------------------------------
 # Configuración
@@ -22,21 +25,38 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 MAX_INPUT_CHARS = int(os.getenv("MAX_INPUT_CHARS", "8000"))
 
+BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 if client is None:
     log.warning("ANTHROPIC_API_KEY no está definida: /api/generar devolverá error 500.")
 
+
 # --------------------------------------------------------------------------
-# Contrato de datos: lo que Claude DEBE devolver
+# Íconos: la lista se lee de static/js/iconos.js (una sola fuente de verdad)
+# --------------------------------------------------------------------------
+def cargar_iconos() -> list[str]:
+    js = (BASE_DIR / "static" / "js" / "iconos.js").read_text(encoding="utf-8")
+    data = json.loads(js[js.index("{"): js.rindex("}") + 1])
+    return sorted(k for k in data if not k.startswith("_"))  # "_x" = íconos internos de la UI
+
+
+ICONOS = cargar_iconos()
+COLORES = ["azul", "verde", "morado", "naranja", "rojo", "celeste"]
+
+# --------------------------------------------------------------------------
+# Contrato de datos: lo que Claude DEBE devolver.
 # Usamos "tool use" forzado para garantizar un JSON válido con esta forma exacta.
 # --------------------------------------------------------------------------
-ICONOS_PERMITIDOS = [
-    "cable", "fibra", "conector", "empalme", "herramienta", "medicion",
-    "seguridad", "alerta", "check", "configuracion", "red", "antena",
-    "servidor", "documento", "persona", "tiempo", "limpieza", "info",
-]
+ITEM_ICONO = {
+    "type": "object",
+    "properties": {
+        "icono": {"type": "string", "enum": ICONOS},
+        "texto": {"type": "string", "description": "Máx. 45 caracteres."},
+    },
+    "required": ["icono", "texto"],
+}
 
 INFOGRAFIA_TOOL = {
     "name": "generar_infografia",
@@ -44,58 +64,114 @@ INFOGRAFIA_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "titulo": {
+            "titulo_linea1": {
                 "type": "string",
-                "description": "Título principal, corto y en MAYÚSCULAS (máx. 60 caracteres).",
+                "description": "Primera línea del título, MAYÚSCULAS, máx. 24 caracteres. Ej: 'REGLAS CLAVE PARA'.",
+            },
+            "titulo_linea2": {
+                "type": "string",
+                "description": "Segunda línea del título (va resaltada en color), MAYÚSCULAS, máx. 24 caracteres. Ej: 'TENDIDOS EXTERNOS'.",
             },
             "subtitulo": {
                 "type": "string",
-                "description": "Una frase que explica el objetivo del procedimiento (máx. 120 caracteres).",
+                "description": "Frase motivadora u objetivo, máx. 90 caracteres.",
             },
-            "pasos": {
+            "secciones": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 8,
+                "maxItems": 6,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "numero": {"type": "integer"},
-                        "titulo": {"type": "string", "description": "Máx. 40 caracteres."},
-                        "descripcion": {"type": "string", "description": "Máx. 180 caracteres."},
-                        "icono": {"type": "string", "enum": ICONOS_PERMITIDOS},
+                        "titulo": {
+                            "type": "string",
+                            "description": "MAYÚSCULAS, máx. 32 caracteres. Ej: 'ORDEN Y LIMPIEZA DE LA UNIDAD'.",
+                        },
+                        "color": {"type": "string", "enum": COLORES},
+                        "icono": {"type": "string", "enum": ICONOS},
+                        "descripcion": {
+                            "type": "string",
+                            "description": "1-2 frases, máx. 160 caracteres. Puede ir vacía.",
+                        },
+                        "puntos": {
+                            "type": "array",
+                            "maxItems": 5,
+                            "items": {"type": "string"},
+                            "description": "Viñetas con check, máx. 70 caracteres cada una.",
+                        },
+                        "chips": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": ITEM_ICONO,
+                            "description": "Conceptos clave con ícono (ej. Respeto, Amabilidad). Opcional.",
+                        },
+                        "destacado": {
+                            "type": "object",
+                            "description": "Mensaje resaltado al pie de la sección. Opcional.",
+                            "properties": {
+                                "tipo": {"type": "string", "enum": ["ok", "alerta", "error", "info"]},
+                                "texto": {"type": "string", "description": "Máx. 110 caracteres."},
+                            },
+                            "required": ["tipo", "texto"],
+                        },
                     },
-                    "required": ["numero", "titulo", "descripcion", "icono"],
+                    "required": ["titulo", "color", "icono", "descripcion", "puntos"],
                 },
             },
-            "notas_importantes": {
+            "verificacion": {
+                "type": "object",
+                "description": "Checklist final tipo 'Antes de cerrar, verifica…'. Opcional.",
+                "properties": {
+                    "titulo": {"type": "string", "description": "Máx. 40 caracteres."},
+                    "items": {"type": "array", "minItems": 2, "maxItems": 5, "items": ITEM_ICONO},
+                },
+                "required": ["titulo", "items"],
+            },
+            "importante": {
                 "type": "array",
                 "maxItems": 3,
-                "items": {"type": "string"},
-                "description": "Advertencias o tips clave (máx. 100 caracteres cada uno).",
+                "description": "Advertencias críticas o prohibiciones. Opcional.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tipo": {"type": "string", "enum": ["no", "si"]},
+                        "texto": {"type": "string", "description": "Máx. 90 caracteres."},
+                    },
+                    "required": ["tipo", "texto"],
+                },
             },
-            "pie": {
+            "lema": {
                 "type": "string",
-                "description": "Texto corto para la barra inferior (ej. área o norma de referencia).",
+                "description": "Frase de cierre para la barra inferior, máx. 60 caracteres.",
             },
         },
-        "required": ["titulo", "subtitulo", "pasos", "notas_importantes", "pie"],
+        "required": ["titulo_linea1", "titulo_linea2", "subtitulo", "secciones", "lema"],
     },
 }
 
-SYSTEM_PROMPT = f"""Eres un diseñador instruccional experto en capacitaciones técnicas de \
-telecomunicaciones y fibra óptica (FTTH, empalmes, OTDR, conectorización, seguridad en campo).
+SYSTEM_PROMPT = f"""Eres un diseñador instruccional experto en capacitaciones para especialistas \
+técnicos de campo de telecomunicaciones (FTTH, CTO/NAP, roseta, ONT, cable drop, tendidos, OFSC, \
+atención al cliente, seguridad y buenas prácticas).
 
-Tu tarea: transformar el texto desordenado del usuario en el contenido de UNA infografía clara.
+Tu tarea: transformar el texto desordenado del usuario en el contenido de UNA infografía tipo \
+"Charla de 5 minutos" / "Refuerzo semanal": clara, visual y fácil de leer en el celular.
 
 Reglas:
-- Escribe siempre en español neutro, con lenguaje técnico correcto pero directo.
-- Ordena los pasos de forma lógica y secuencial; numéralos desde 1.
-- Cada paso: título breve con verbo en infinitivo (ej. "Limpiar el conector") y una descripción concreta.
-- Agrupa o resume si hay demasiado detalle: máximo 8 pasos.
-- Elige el icono más representativo SOLO de esta lista: {", ".join(ICONOS_PERMITIDOS)}.
-- No inventes datos técnicos (valores, normas, medidas) que no estén en el texto.
-- Las notas importantes deben ser advertencias de seguridad o tips críticos, si existen.
+- Español neutro de Perú, directo, en segunda persona ("Mantén", "Verifica", "Escala").
+- Respeta los términos técnicos y siglas del texto tal como vienen (TCP, TCE, OFSC, NAP, ONT, etc.).
+- No inventes datos (valores, metrajes, normas, teléfonos) que no estén en el texto.
+- Divide el contenido en 1 a 6 secciones temáticas; cada una se numera automáticamente.
+- Sé breve: las infografías se leen en segundos. Prefiere viñetas cortas a párrafos.
+- Varía los colores de las secciones (azul, verde, morado, naranja…). Usa "rojo" solo para \
+prohibiciones o errores.
+- Usa "destacado" para la idea clave de la sección: "ok" para buenas prácticas, "error" para lo \
+que NO se debe hacer, "alerta" para precauciones, "info" para datos.
+- Usa "chips" solo si hay conceptos cortos que se lucen mejor como íconos.
+- Usa "verificacion" si el texto implica un checklist final, e "importante" para prohibiciones \
+o advertencias críticas. Si no aplican, omítelos.
+- Elige íconos SOLO de esta lista: {", ".join(ICONOS)}.
 """
+
 
 # --------------------------------------------------------------------------
 # Rutas
@@ -127,7 +203,7 @@ def generar():
     try:
         respuesta = client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=2000,
+            max_tokens=4000,
             system=SYSTEM_PROMPT,
             tools=[INFOGRAFIA_TOOL],
             tool_choice={"type": "tool", "name": INFOGRAFIA_TOOL["name"]},
@@ -151,12 +227,7 @@ def generar():
     if bloque is None:
         return jsonify(error="La IA no devolvió una estructura válida."), 502
 
-    infografia = bloque.input
-    # Normaliza la numeración por si el modelo se salta algún número
-    for i, paso in enumerate(infografia.get("pasos", []), start=1):
-        paso["numero"] = i
-
-    return jsonify(infografia)
+    return jsonify(bloque.input)
 
 
 # --------------------------------------------------------------------------
