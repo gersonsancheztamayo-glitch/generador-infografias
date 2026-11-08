@@ -66,7 +66,7 @@ npm run build:css
 | Variable | Descripción | Por defecto |
 |---|---|---|
 | `GEMINI_API_KEY` | Clave gratuita de Google AI Studio (activa «Generar» y «Revisar con IA») | — |
-| `GEMINI_MODEL` | Modelo de Gemini | `gemini-flash-latest` |
+| `GEMINI_MODEL` | Modelo de Gemini | `gemini-3.8-flash` (con respaldo automático) |
 | `ANTHROPIC_API_KEY` | Alternativa de pago: API de Anthropic | — |
 | `CLAUDE_MODEL` | Modelo de Claude | `claude-sonnet-5-5` |
 | `MAX_INPUT_CHARS` | Máximo de caracteres del texto de entrada | `8000` |

@@ -16,8 +16,10 @@ import re
 log = logging.getLogger("infografias.ia")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# "gemini-flash-latest" siempre apunta al modelo Flash vigente: no hay que tocar código cuando Google lo actualiza.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# Si Google retira un modelo (error 404), se prueba el siguiente de esta lista automáticamente.
+GEMINI_RESPALDO = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.1-flash-lite"]
+_modelos_gemini = list(dict.fromkeys([GEMINI_MODEL, *GEMINI_RESPALDO]))  # sin duplicados, en orden
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 
@@ -109,29 +111,33 @@ def generar_json(sistema: str, texto: str, esquema: dict, imagenes=None, nombre=
 def _gemini_json(sistema, texto, esquema, imagenes):
     partes = [gemini_types.Part.from_bytes(data=d, mime_type=t) for t, d in imagenes]
     partes.append(gemini_types.Part.from_text(text=texto))
-    try:
-        r = _gemini.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=partes,
-            config=gemini_types.GenerateContentConfig(
-                system_instruction=sistema,
-                response_mime_type="application/json",
-                response_json_schema=esquema,
-                temperature=0.4,
-            ),
-        )
-    except gemini_errors.APIError as e:
-        log.warning("Error de Gemini %s: %s", e.code, e.message)
-        msg = (e.message or "").lower()
-        if e.code in (401, 403) or "api key" in msg:
-            raise ErrorIA("La GEMINI_API_KEY no es válida. Revísala en aistudio.google.com.", 500)
-        if e.code == 429:
-            raise ErrorIA(
-                "Se alcanzó el límite gratuito de Gemini por ahora. Espera un minuto (o hasta mañana si es el "
-                "límite diario) o usa el modo copiar/pegar con Claude Pro.", 429)
-        if e.code == 404:
-            raise ErrorIA(f"El modelo «{GEMINI_MODEL}» no está disponible. Revisa la variable GEMINI_MODEL.", 500)
-        raise ErrorIA("Gemini no respondió correctamente. Inténtalo de nuevo.", 502)
+    config = gemini_types.GenerateContentConfig(
+        system_instruction=sistema,
+        response_mime_type="application/json",
+        response_json_schema=esquema,
+        temperature=0.4,
+    )
+    while True:
+        modelo = _modelos_gemini[0]
+        try:
+            r = _gemini.models.generate_content(model=modelo, contents=partes, config=config)
+            break
+        except gemini_errors.APIError as e:
+            log.warning("Error de Gemini (%s) %s: %s", modelo, e.code, e.message)
+            msg = (e.message or "").lower()
+            if e.code == 404 and len(_modelos_gemini) > 1:
+                _modelos_gemini.pop(0)  # modelo retirado: se recuerda y se pasa al siguiente
+                log.warning("Modelo %s no disponible; probando %s", modelo, _modelos_gemini[0])
+                continue
+            if e.code in (401, 403) or "api key" in msg:
+                raise ErrorIA("La GEMINI_API_KEY no es válida. Revísala en aistudio.google.com.", 500)
+            if e.code == 429:
+                raise ErrorIA(
+                    "Se alcanzó el límite gratuito de Gemini por ahora. Espera un minuto (o hasta mañana si es el "
+                    "límite diario) o usa el modo copiar/pegar con Claude Pro.", 429)
+            if e.code == 404:
+                raise ErrorIA("Ningún modelo de Gemini respondió. Revisa la variable GEMINI_MODEL en Render.", 500)
+            raise ErrorIA("Gemini no respondió correctamente. Inténtalo de nuevo.", 502)
 
     try:
         return json.loads(r.text)

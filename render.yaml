@@ -14,7 +14,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: GEMINI_MODEL
-        value: gemini-flash-latest
+        value: gemini-3.8-flash
       - key: MAX_INPUT_CHARS
         value: "8000"
       # Activa «Generar» y «Revisar con IA» (gratis). Render te la pedirá al crear el servicio;
