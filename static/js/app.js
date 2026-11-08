@@ -63,6 +63,7 @@ const OPCIONES_DEFECTO = {
   calidad: "2",
   logo: "",
   cabecera: "",
+  revisarAntes: true,
 };
 
 /* ---------- estado ---------- */
@@ -318,7 +319,7 @@ lienzo.addEventListener("click", (e) => {
 });
 
 /* ---------- imágenes (se reducen para no saturar la memoria) ---------- */
-function leerImagen(archivo, maxLado = 1600) {
+function leerImagen(archivo, maxLado = 1600, forzarJpeg = false) {
   return new Promise((ok, mal) => {
     const lector = new FileReader();
     lector.onerror = mal;
@@ -331,7 +332,7 @@ function leerImagen(archivo, maxLado = 1600) {
         c.width = Math.round(img.width * k);
         c.height = Math.round(img.height * k);
         c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        const png = archivo.type === "image/png";
+        const png = archivo.type === "image/png" && !forzarJpeg;
         ok(c.toDataURL(png ? "image/png" : "image/jpeg", 0.9));
       };
       img.src = lector.result;
@@ -369,11 +370,13 @@ for (const campo of ["logo", "cabecera"]) {
 document.querySelectorAll("[data-opcion]").forEach((el) => {
   const clave = el.dataset.opcion;
   if (el.type === "radio") el.checked = opciones[clave] === el.value;
+  else if (el.type === "checkbox") el.checked = !!opciones[clave];
   else el.value = opciones[clave];
   el.addEventListener(el.type === "text" ? "input" : "change", () => {
     if (el.type === "radio" && !el.checked) return;
-    opciones[clave] = el.value;
-    render();
+    opciones[clave] = el.type === "checkbox" ? el.checked : el.value;
+    if (el.type === "checkbox") guardarLocal();
+    else render();
   });
 });
 
@@ -384,36 +387,96 @@ const contador = () => ($("#contador").textContent = `${texto.value.length} / ${
 texto.addEventListener("input", contador);
 contador();
 
-let hayAPI = false;
+/* ---------- IA disponible en el servidor ---------- */
+let IA = { ia: null, ia_nombre: null, gratis: false, max_imagenes: 4 };
 fetch("/api/config").then((r) => r.json()).then((c) => {
-  hayAPI = c.api;
-  $("#estado-api").textContent = hayAPI
-    ? "✅ API de Anthropic conectada: genera en un clic (consume saldo de la API)."
-    : "🔒 «Generar con IA» necesita una API key de Anthropic (ANTHROPIC_API_KEY en Render). Sin ella, usa los pasos 2 y 3: gratis con tu Claude Pro.";
+  IA = c;
+  const estado = $("#estado-api");
+  if (c.ia === "gemini") {
+    estado.innerHTML = "✅ Conectado a <b>Gemini</b> (gratis): lee tu texto y tus imágenes.<br>⚠ En el plan gratuito Google puede usar lo que envías para mejorar sus modelos: no subas datos de clientes.";
+  } else if (c.ia === "claude") {
+    estado.innerHTML = "✅ Conectado a <b>Claude</b> (API de pago por uso).";
+  } else {
+    estado.innerHTML = "🔒 «Generar» y «Revisar con IA» necesitan una API key. Gratis: crea una en <b>aistudio.google.com</b> y agrégala en Render → Environment como <b>GEMINI_API_KEY</b>. Mientras tanto usa tu Claude Pro 👇";
+    $("#panel-pro").open = true;
+    $("#btn-generar").classList.add("opacity-60");
+  }
 }).catch(() => {});
 
+/* ---------- imágenes de referencia (la IA las lee; no van en la infografía) ---------- */
+let referencias = [];
+function pintarReferencias() {
+  $("#referencias").innerHTML = referencias.map((src, i) => `
+    <div class="relative aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+      <img src="${src}" alt="Referencia ${i + 1}" class="w-full h-full object-cover">
+      <button type="button" data-quitar-ref="${i}" title="Quitar"
+        class="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 hover:bg-black/80 text-white text-sm leading-none">×</button>
+    </div>`).join("");
+}
+async function agregarReferencias(archivos) {
+  const imagenes = [...archivos].filter((f) => /^image\/(png|jpeg|webp)$/.test(f.type));
+  if (!imagenes.length) return aviso("Solo se aceptan imágenes JPG, PNG o WEBP.", "error");
+  const libres = (IA.max_imagenes || 4) - referencias.length;
+  if (libres <= 0) return aviso(`Ya tienes ${referencias.length} imágenes de referencia (máximo). Quita alguna primero.`, "error");
+  for (const f of imagenes.slice(0, libres)) referencias.push(await leerImagen(f, 1600, true));
+  pintarReferencias();
+  if (imagenes.length > libres) aviso(`Solo se agregaron ${libres}: el máximo es ${IA.max_imagenes || 4} imágenes.`, "info");
+}
+$("#input-referencias").addEventListener("change", async (e) => {
+  await agregarReferencias(e.target.files);
+  e.target.value = "";
+});
+$("#referencias").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-quitar-ref]");
+  if (!b) return;
+  referencias.splice(Number(b.dataset.quitarRef), 1);
+  pintarReferencias();
+});
+// Ctrl+V de una captura (fuera de la infografía) → imagen de referencia
+document.addEventListener("paste", (e) => {
+  if (e.target.closest?.("#lienzo, dialog")) return;
+  const archivos = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (!archivos.length) return;
+  e.preventDefault();
+  agregarReferencias(archivos);
+});
+// Arrastrar y soltar sobre el paso 1
+const zonaTexto = texto.closest("section");
+zonaTexto.addEventListener("dragover", (e) => { e.preventDefault(); zonaTexto.classList.add("ring-2", "ring-blue-400"); });
+zonaTexto.addEventListener("dragleave", () => zonaTexto.classList.remove("ring-2", "ring-blue-400"));
+zonaTexto.addEventListener("drop", (e) => {
+  e.preventDefault();
+  zonaTexto.classList.remove("ring-2", "ring-blue-400");
+  if (e.dataTransfer.files.length) agregarReferencias(e.dataTransfer.files);
+});
+
+/* ---------- generar con IA ---------- */
 $("#btn-generar").addEventListener("click", async () => {
   const contenido = texto.value.trim();
-  if (!hayAPI)
-    return aviso("Esta opción necesita una API key de Anthropic configurada en Render (variable ANTHROPIC_API_KEY). Por ahora usa el modo gratis: pulsa «Copiar prompt» (paso 2).", "error");
-  if (!contenido) return aviso("Falta el texto: pégalo en el paso 1.", "error");
+  if (!IA.ia) {
+    $("#panel-pro").open = true;
+    return aviso("«Generar con IA» necesita una API key (gratis con Gemini: GEMINI_API_KEY en Render). Por ahora usa «¿Sin API? Usa tu Claude Pro» → Copiar prompt.", "error");
+  }
+  if (!contenido && !referencias.length) return aviso("Falta el contenido: pega un texto o agrega imágenes de referencia.", "error");
 
   const btn = $("#btn-generar");
   btn.disabled = true;
   btn.querySelector("span").textContent = "Generando…";
-  aviso("La IA está ordenando tu contenido. Suele tardar entre 10 y 30 segundos.");
+  const extra = referencias.length ? ` y ${referencias.length} imagen(es)` : "";
+  aviso(`${IA.ia_nombre} está leyendo tu texto${extra}. Suele tardar entre 10 y 30 segundos.`);
 
   try {
     const r = await fetch("/api/generar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texto: contenido }),
+      body: JSON.stringify({ texto: contenido, imagenes: referencias }),
     });
     const json = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(json.error || `Error ${r.status}`);
     datos = normalizar(json);
+    firmaRevisada = null;
     render();
-    aviso("¡Listo! Haz clic en cualquier texto para corregirlo antes de descargar.", "ok");
+    aviso("¡Listo! Corrige con un clic lo que quieras y pulsa «Revisar con IA» antes de descargar.", "ok");
   } catch (err) {
     aviso(err.message || "No se pudo generar la infografía.", "error");
   } finally {
@@ -447,10 +510,12 @@ $("#btn-copiar").addEventListener("click", async () => {
     const json = await r.json();
     if (!r.ok) throw new Error(json.error);
     await copiarAlPortapapeles(json.prompt);
+    if (referencias.length)
+      return aviso(`✅ Prompt copiado. En claude.ai pégalo y ADJUNTA tus ${referencias.length} imagen(es) de referencia (no se copian solas). Luego pega la respuesta abajo.`, "ok");
     aviso(
       contenido
-        ? "✅ Prompt copiado. Ahora: abre claude.ai → pega (Ctrl+V) → envía. Puedes adjuntar imágenes de referencia. Luego copia toda la respuesta y pégala en el paso 3."
-        : "✅ Prompt copiado SIN texto: en claude.ai adjunta las imágenes de referencia (capturas, fotos, infografías) antes de enviar. Luego pega la respuesta en el paso 3.",
+        ? "✅ Prompt copiado. Ahora: abre claude.ai → pega (Ctrl+V) → envía. Puedes adjuntar imágenes de referencia. Luego copia toda la respuesta y pégala abajo."
+        : "✅ Prompt copiado SIN texto: en claude.ai adjunta las imágenes de referencia (capturas, fotos, infografías) antes de enviar. Luego pega la respuesta abajo.",
       "ok"
     );
   } catch (err) {
@@ -536,7 +601,12 @@ async function exportarPNG() {
   return canvas;
 }
 
-$("#btn-descargar").addEventListener("click", async () => {
+$("#btn-descargar").addEventListener("click", () => {
+  if (opciones.revisarAntes && firmaRevisada !== firma()) return abrirRevision({ paraDescargar: true });
+  descargar();
+});
+
+async function descargar() {
   const btn = $("#btn-descargar");
   btn.disabled = true;
   btn.querySelector("span").textContent = "Creando imagen…";
@@ -556,7 +626,225 @@ $("#btn-descargar").addEventListener("click", async () => {
     btn.disabled = false;
     btn.querySelector("span").textContent = "Descargar PNG";
   }
+}
+
+/* =====================================================================
+   REVISIÓN CON IA (antes de descargar)
+   ===================================================================== */
+const firma = () => JSON.stringify(datos, sinPrivados);
+let firmaRevisada = null;
+
+const dlg = $("#dlg-revision");
+const escHTML = (t) => String(t ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+const CATEGORIAS = {
+  ortografia:      { txt: "Ortografía",    cls: "bg-blue-100 text-blue-800" },
+  siglas:          { txt: "Siglas",        cls: "bg-indigo-100 text-indigo-800" },
+  claridad:        { txt: "Claridad",      cls: "bg-amber-100 text-amber-800" },
+  longitud:        { txt: "Muy largo",     cls: "bg-orange-100 text-orange-800" },
+  datos_sensibles: { txt: "Dato sensible", cls: "bg-red-100 text-red-800" },
+  coherencia:      { txt: "Coherencia",    cls: "bg-violet-100 text-violet-800" },
+};
+
+function nombreCampo(ruta) {
+  const p = ruta.split(".");
+  const fijos = { titulo_linea1: "Título · línea 1", titulo_linea2: "Título · línea 2", subtitulo: "Subtítulo", lema: "Frase del pie", general: "General" };
+  if (fijos[ruta]) return fijos[ruta];
+  if (p[0] === "secciones") {
+    const sec = `Sección ${+p[1] + 1}`;
+    const parte = { titulo: "título", descripcion: "descripción", puntos: `punto ${+p[3] + 1}`, chips: `concepto ${+p[3] + 1}`, destacado: "mensaje destacado" }[p[2]];
+    return `${sec} · ${parte}`;
+  }
+  if (p[0] === "verificacion") return p[1] === "titulo" ? "Checklist · título" : `Checklist · ítem ${+p[2] + 1}`;
+  if (p[0] === "importante") return `Importante · aviso ${+p[1] + 1}`;
+  return ruta;
+}
+
+function botonPie(texto, accion, estilo = "sec") {
+  const estilos = {
+    sec: "border border-slate-300 bg-white hover:bg-slate-50 text-slate-700",
+    pri: "bg-[#6b3fd4] hover:bg-[#4a25a3] text-white",
+    desc: "bg-[#f26b1d] hover:bg-[#c24d0c] text-white",
+  };
+  return `<button type="button" data-rev="${accion}" class="h-10 px-4 rounded-lg font-semibold text-sm ${estilos[estilo]}">${texto}</button>`;
+}
+
+let revisionActual = null;
+let revisionParaDescargar = false;
+
+function abrirRevision({ paraDescargar = false } = {}) {
+  document.activeElement?.blur(); // guarda la edición en curso
+  revisionParaDescargar = paraDescargar;
+  revisionActual = null;
+  $("#rev-puntaje").classList.add("hidden");
+  if (!dlg.open) dlg.showModal();
+  if (IA.ia) revisarConAPI();
+  else mostrarModoManual();
+}
+
+async function revisarConAPI() {
+  $("#rev-resumen").textContent = `${IA.ia_nombre} está revisando ortografía, siglas, claridad, longitud y datos sensibles…`;
+  $("#rev-cuerpo").innerHTML = `<div class="flex items-center gap-3 py-10 justify-center text-slate-500">
+      <span class="w-6 h-6 rounded-full border-4 border-violet-200 border-t-violet-600 animate-spin"></span> Revisando…</div>`;
+  $("#rev-pie").innerHTML = botonPie("Cancelar", "cerrar") + (revisionParaDescargar ? botonPie("Descargar sin revisar", "descargar-sin", "desc") : "");
+  try {
+    const r = await fetch("/api/revisar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ datos: JSON.parse(firma()) }),
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(json.error || `Error ${r.status}`);
+    if (dlg.open) mostrarResultado(json);
+  } catch (err) {
+    $("#rev-resumen").textContent = "No se pudo completar la revisión.";
+    $("#rev-cuerpo").innerHTML = `<p class="rounded-lg bg-red-50 border border-red-200 text-red-800 p-3">${escHTML(err.message)}</p>`;
+    $("#rev-pie").innerHTML = botonPie("Cerrar", "cerrar") + botonPie("Revisar con Claude Pro", "manual") +
+      (revisionParaDescargar ? botonPie("Descargar sin revisar", "descargar-sin", "desc") : "");
+  }
+}
+
+function mostrarModoManual() {
+  $("#rev-resumen").textContent = "Sin API key: haz la revisión gratis con tu Claude Pro.";
+  $("#rev-cuerpo").innerHTML = `
+    <div class="rounded-lg bg-amber-50 border border-amber-200 text-amber-900 p-3 text-[13px]">
+      Para revisar en un clic, agrega una API key gratuita de Gemini: <b>aistudio.google.com</b> → «Get API key» →
+      Render → Environment → <b>GEMINI_API_KEY</b>.
+    </div>
+    <ol class="list-decimal pl-5 space-y-1 text-slate-700">
+      <li>Pulsa <b>Copiar prompt de revisión</b> y pégalo en un chat nuevo de claude.ai.</li>
+      <li>Copia toda la respuesta de Claude y pégala aquí abajo.</li>
+    </ol>
+    <div class="flex gap-2">
+      ${botonPie("📋 Copiar prompt de revisión", "copiar-rev", "pri")}
+      <a href="https://claude.ai/new" target="_blank" rel="noopener" class="h-10 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-semibold text-sm flex items-center text-slate-700">Abrir claude.ai ↗</a>
+    </div>
+    <textarea id="rev-pegada" rows="5" class="w-full rounded-lg border border-slate-300 p-2 text-xs font-mono" placeholder="Pega aquí la respuesta de Claude"></textarea>`;
+  $("#rev-pie").innerHTML = botonPie("Cancelar", "cerrar") +
+    (revisionParaDescargar ? botonPie("Descargar sin revisar", "descargar-sin", "desc") : "") +
+    botonPie("Ver revisión", "leer-pegada", "pri");
+}
+
+function mostrarResultado(r) {
+  revisionActual = r;
+  const badge = $("#rev-puntaje");
+  badge.textContent = r.puntaje;
+  badge.style.background = r.puntaje >= 9 ? "#13a150" : r.puntaje >= 7 ? "#f59e0b" : "#e02424";
+  badge.title = "Puntaje de 1 a 10";
+  badge.classList.remove("hidden");
+  $("#rev-resumen").textContent = r.resumen || "";
+
+  if (!r.observaciones.length) {
+    firmaRevisada = firma();
+    $("#rev-cuerpo").innerHTML = `<div class="text-center py-8">
+        <div class="text-4xl mb-2">✅</div>
+        <p class="font-semibold text-slate-800">No encontré problemas. La infografía está lista para publicar.</p></div>`;
+    $("#rev-pie").innerHTML = botonPie("Cerrar", "cerrar") + botonPie("Descargar PNG", "descargar-sin", "desc");
+    return;
+  }
+
+  $("#rev-cuerpo").innerHTML = r.observaciones.map((o, k) => {
+    const cat = CATEGORIAS[o.categoria] || CATEGORIAS.claridad;
+    const general = o.ruta === "general";
+    return `
+    <div class="rounded-xl border border-slate-200 p-3 ${general ? "bg-slate-50" : ""}">
+      <div class="flex items-center gap-2 mb-2">
+        ${general ? `<span class="w-4"></span>` : `<input type="checkbox" checked data-obs="${k}" class="w-4 h-4 rounded accent-violet-600" title="Aplicar esta corrección">`}
+        <span class="text-[11px] font-bold uppercase rounded-full px-2 py-0.5 ${cat.cls}">${cat.txt}</span>
+        <span class="text-xs font-semibold text-slate-500">${escHTML(nombreCampo(o.ruta))}</span>
+      </div>
+      ${general ? "" : `
+      <div class="grid gap-1 pl-6">
+        <p class="rounded-md bg-red-50 text-red-900 px-2 py-1 line-through decoration-red-400">${escHTML(o.original)}</p>
+        <p class="rounded-md bg-green-50 text-green-900 px-2 py-1 font-medium" contenteditable="true" spellcheck="false" data-sug="${k}" title="Puedes editar la sugerencia antes de aplicarla">${escHTML(o.sugerencia)}</p>
+      </div>`}
+      <p class="text-xs text-slate-500 mt-1 pl-6">${escHTML(o.motivo)}</p>
+    </div>`;
+  }).join("") + `<p class="text-xs text-slate-400">Desmarca lo que no quieras cambiar. Puedes editar el texto verde antes de aplicar.</p>`;
+
+  const hayAplicables = r.observaciones.some((o) => o.ruta !== "general");
+  $("#rev-pie").innerHTML = botonPie("Cancelar", "cerrar") + (revisionParaDescargar
+    ? botonPie("Descargar sin cambios", "descargar-sin", "sec") + (hayAplicables ? botonPie("Aplicar y descargar", "aplicar-descargar", "desc") : "")
+    : (hayAplicables ? botonPie("Aplicar seleccionadas", "aplicar", "pri") : botonPie("Entendido", "visto", "pri")));
+}
+
+function aplicarSeleccionadas() {
+  let n = 0;
+  revisionActual.observaciones.forEach((o, k) => {
+    if (o.ruta === "general" || !dlg.querySelector(`[data-obs="${k}"]`)?.checked) return;
+    const nuevo = dlg.querySelector(`[data-sug="${k}"]`).innerText.replace(/\s+/g, " ").trim();
+    if (!nuevo) return;
+    asignarRuta(datos, o.ruta, nuevo);
+    n++;
+  });
+  render();
+  firmaRevisada = firma();
+  return n;
+}
+
+dlg.addEventListener("click", async (e) => {
+  if (e.target === dlg || e.target.closest("[data-cerrar]")) return dlg.close();
+  const b = e.target.closest("[data-rev]");
+  if (!b) return;
+  switch (b.dataset.rev) {
+    case "cerrar":
+      return dlg.close();
+    case "visto":
+      firmaRevisada = firma();
+      return dlg.close();
+    case "manual":
+      return mostrarModoManual();
+    case "aplicar": {
+      const n = aplicarSeleccionadas();
+      dlg.close();
+      return aviso(n ? `✅ Se aplicaron ${n} corrección(es).` : "No se aplicó ningún cambio.", "ok");
+    }
+    case "aplicar-descargar":
+      aplicarSeleccionadas();
+      dlg.close();
+      return descargar();
+    case "descargar-sin":
+      firmaRevisada = firma();
+      dlg.close();
+      return descargar();
+    case "copiar-rev":
+      try {
+        const r = await fetch("/api/prompt-revision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ datos: JSON.parse(firma()) }),
+        });
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error);
+        await copiarAlPortapapeles(json.prompt);
+        b.textContent = "✅ Copiado: pégalo en claude.ai";
+      } catch (err) {
+        b.textContent = "No se pudo copiar: " + err.message;
+      }
+      return;
+    case "leer-pegada": {
+      const txt = $("#rev-pegada").value.trim();
+      if (!txt) return $("#rev-pegada").focus();
+      try {
+        const rev = extraerJSON(txt);
+        const r = await fetch("/api/limpiar-revision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ datos: JSON.parse(firma()), revision: rev }),
+        });
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error);
+        mostrarResultado(json);
+      } catch (err) {
+        $("#rev-pegada").classList.add("border-red-400");
+        $("#rev-resumen").textContent = `No pude leer la respuesta (${err.message}). Copia la respuesta completa de Claude.`;
+      }
+      return;
+    }
+  }
 });
+
+$("#btn-revisar").addEventListener("click", () => abrirRevision());
 
 /* ---------- compartir (celular: WhatsApp, Telegram, etc.) ---------- */
 const btnCompartir = $("#btn-compartir");

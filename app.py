@@ -1,6 +1,7 @@
 """
 Generador de Infografías Técnicas
-Backend Flask: recibe texto en sucio y lo convierte en JSON estructurado con Claude.
+Backend Flask: convierte texto en sucio (y fotos de referencia) en un JSON estructurado
+y revisa el contenido antes de exportar. IA: Gemini (gratis) o Claude; sin clave, modo copiar/pegar.
 """
 
 import json
@@ -8,28 +9,24 @@ import logging
 import os
 from pathlib import Path
 
-import anthropic
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
 
-# --------------------------------------------------------------------------
-# Configuración
-# --------------------------------------------------------------------------
-load_dotenv()  # Lee el archivo .env en local. En Render se usan las variables del panel.
+load_dotenv()  # Lee .env en local (antes de importar ia.py). En Render se usan las variables del panel.
+
+from flask import Flask, jsonify, render_template, request  # noqa: E402
+
+import ia  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("infografias")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 MAX_INPUT_CHARS = int(os.getenv("MAX_INPUT_CHARS", "8000"))
 
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 4 imágenes de referencia + texto
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
-if client is None:
-    log.warning("Sin ANTHROPIC_API_KEY: la web funciona en modo gratis (copiar/pegar con Claude Pro).")
+log.info("IA activa: %s", ia.NOMBRES.get(ia.proveedor(), "ninguna (modo copiar/pegar con Claude Pro)"))
 
 
 # --------------------------------------------------------------------------
@@ -45,8 +42,8 @@ ICONOS = cargar_iconos()
 COLORES = ["azul", "verde", "morado", "naranja", "rojo", "celeste"]
 
 # --------------------------------------------------------------------------
-# Contrato de datos: lo que Claude DEBE devolver.
-# Usamos "tool use" forzado para garantizar un JSON válido con esta forma exacta.
+# Contrato de datos: lo que la IA DEBE devolver (JSON Schema).
+# Gemini lo recibe como "response_json_schema"; Claude como herramienta forzada.
 # --------------------------------------------------------------------------
 ITEM_ICONO = {
     "type": "object",
@@ -169,6 +166,9 @@ que NO se debe hacer, "alerta" para precauciones, "info" para datos.
 - Usa "chips" solo si hay conceptos cortos que se lucen mejor como íconos.
 - Usa "verificacion" si el texto implica un checklist final, e "importante" para prohibiciones \
 o advertencias críticas. Si no aplican, omítelos.
+- Si hay imágenes de referencia (capturas, fotos, infografías antiguas), extrae de ellas pasos, datos \
+y advertencias. NUNCA copies datos personales de clientes que aparezcan en ellas (nombres, teléfonos \
+personales, DNI, direcciones exactas, números de orden).
 - Elige íconos SOLO de esta lista: {", ".join(ICONOS)}.
 """
 
@@ -184,13 +184,20 @@ def index():
 @app.route("/health")
 def health():
     """Endpoint ligero para que Render verifique que el servicio está vivo."""
-    return jsonify(status="ok", modelo=CLAUDE_MODEL, api_key_configurada=client is not None)
+    return jsonify(status="ok", ia=ia.proveedor())
 
 
 @app.route("/api/config")
 def config():
-    """Le dice al navegador si el botón 'Generar con IA' está disponible."""
-    return jsonify(api=client is not None, max_caracteres=MAX_INPUT_CHARS)
+    """Le dice al navegador qué IA hay disponible para «Generar» y «Revisar»."""
+    p = ia.proveedor()
+    return jsonify(
+        ia=p,
+        ia_nombre=ia.NOMBRES.get(p),
+        gratis=p == "gemini",
+        max_caracteres=MAX_INPUT_CHARS,
+        max_imagenes=ia.MAX_IMAGENES,
+    )
 
 
 # Ejemplo que se incluye en el prompt del modo sin API (muestra la estructura exacta)
@@ -260,48 +267,185 @@ def prompt():
 
 @app.route("/api/generar", methods=["POST"])
 def generar():
-    if client is None:
-        return jsonify(
-            error="«Generar con IA» necesita una API key de Anthropic (variable ANTHROPIC_API_KEY en Render). "
-            "Mientras tanto, usa el modo gratuito con tu Claude Pro: pasos 2 y 3."
-        ), 503
-
     data = request.get_json(silent=True) or {}
     texto = (data.get("texto") or "").strip()
-
-    if not texto:
-        return jsonify(error="Debes enviar un texto para generar la infografía."), 400
-    if len(texto) > MAX_INPUT_CHARS:
-        return jsonify(error=f"El texto supera el máximo de {MAX_INPUT_CHARS} caracteres."), 400
-
     try:
-        respuesta = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            tools=[INFOGRAFIA_TOOL],
-            tool_choice={"type": "tool", "name": INFOGRAFIA_TOOL["name"]},
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Convierte este texto en una infografía:\n\n<texto>\n{texto}\n</texto>",
-                }
-            ],
-        )
-    except anthropic.AuthenticationError:
-        log.exception("API key inválida")
-        return jsonify(error="La API key de Anthropic no es válida."), 500
-    except anthropic.RateLimitError:
-        return jsonify(error="Demasiadas solicitudes. Espera unos segundos e inténtalo de nuevo."), 429
-    except anthropic.APIError:
-        log.exception("Error llamando a la API de Anthropic")
-        return jsonify(error="Error al comunicarse con la IA. Inténtalo de nuevo."), 502
+        imagenes = ia.decodificar_imagenes(data.get("imagenes"))
+        if not texto and not imagenes:
+            return jsonify(error="Falta el contenido: pega un texto o agrega imágenes de referencia en el paso 1."), 400
+        if len(texto) > MAX_INPUT_CHARS:
+            return jsonify(error=f"El texto supera el máximo de {MAX_INPUT_CHARS} caracteres."), 400
+        pedido = "Convierte este contenido en una infografía."
+        if imagenes:
+            pedido += f" Usa también las {len(imagenes)} imagen(es) de referencia adjuntas."
+        pedido += f"\n\n<texto>\n{texto or '(Sin texto: usa solo las imágenes.)'}\n</texto>"
+        resultado = ia.generar_json(SYSTEM_PROMPT, pedido, INFOGRAFIA_TOOL["input_schema"], imagenes, "generar_infografia")
+    except ia.ErrorIA as e:
+        return jsonify(error=e.mensaje), e.status
+    return jsonify(resultado)
 
-    bloque = next((b for b in respuesta.content if b.type == "tool_use"), None)
-    if bloque is None:
-        return jsonify(error="La IA no devolvió una estructura válida."), 502
 
-    return jsonify(bloque.input)
+# --------------------------------------------------------------------------
+# Revisión antes de exportar
+# --------------------------------------------------------------------------
+CATEGORIAS = ["ortografia", "siglas", "claridad", "longitud", "datos_sensibles", "coherencia"]
+
+
+def campos_de_texto(d: dict) -> dict[str, tuple[str, int]]:
+    """Aplana la infografía: {ruta: (texto, límite de caracteres)}. Las rutas coinciden con data-path del HTML."""
+    campos: dict[str, tuple[str, int]] = {}
+
+    def add(ruta, valor, limite):
+        if isinstance(valor, str) and valor.strip():
+            campos[ruta] = (valor.strip(), limite)
+
+    add("titulo_linea1", d.get("titulo_linea1"), 24)
+    add("titulo_linea2", d.get("titulo_linea2"), 24)
+    add("subtitulo", d.get("subtitulo"), 90)
+    for i, s in enumerate(d.get("secciones") or []):
+        if not isinstance(s, dict):
+            continue
+        add(f"secciones.{i}.titulo", s.get("titulo"), 32)
+        add(f"secciones.{i}.descripcion", s.get("descripcion"), 160)
+        for j, p in enumerate(s.get("puntos") or []):
+            add(f"secciones.{i}.puntos.{j}", p, 70)
+        for j, c in enumerate(s.get("chips") or []):
+            add(f"secciones.{i}.chips.{j}.texto", (c or {}).get("texto"), 45)
+        add(f"secciones.{i}.destacado.texto", (s.get("destacado") or {}).get("texto"), 110)
+    v = d.get("verificacion") or {}
+    add("verificacion.titulo", v.get("titulo"), 40)
+    for j, it in enumerate(v.get("items") or []):
+        add(f"verificacion.items.{j}.texto", (it or {}).get("texto"), 45)
+    for j, it in enumerate(d.get("importante") or []):
+        add(f"importante.{j}.texto", (it or {}).get("texto"), 90)
+    add("lema", d.get("lema"), 60)
+    return campos
+
+
+REVISION_SISTEMA = """Eres el editor final de infografías de capacitación para especialistas técnicos de \
+campo de telecomunicaciones (FTTH, CTO/NAP, roseta, ONT, cable drop, OFSC, TCP, TCE). Revisas el texto \
+JUSTO ANTES de publicarlo como imagen que se leerá en el celular.
+
+Revisa cada campo y reporta SOLO problemas reales, de estas categorías:
+- ortografia: faltas, tildes, puntuación, mayúsculas incorrectas.
+- siglas: siglas escritas de forma distinta en la infografía (ej. "Ofsc" y "OFSC") o mal escritas.
+- claridad: frases ambiguas, confusas o que un técnico podría malinterpretar.
+- longitud: texto que supera su límite de caracteres; propone una versión más corta con el mismo sentido.
+- datos_sensibles: datos personales de clientes (nombres, teléfonos personales, DNI, direcciones exactas, \
+números de orden). Los números de soporte oficiales de la empresa NO son sensibles.
+- coherencia: contradicciones entre secciones, ideas repetidas o una advertencia que no encaja.
+
+Reglas:
+- "sugerencia" es el texto COMPLETO de reemplazo del campo, listo para pegar. Mantén MAYÚSCULAS en los títulos.
+- No cambies el significado, valores técnicos, metrajes, siglas válidas ni procedimientos. No inventes datos.
+- No propongas cambios de puro estilo si el texto ya es correcto.
+- Usa la ruta "general" solo para observaciones que no se arreglan editando un campo (ej. secciones \
+repetidas); en ese caso deja "sugerencia" vacía.
+- Máximo 12 observaciones, las más importantes primero.
+- "puntaje" de 1 a 10 (10 = lista para publicar). "resumen": una frase en español."""
+
+
+def esquema_revision(rutas: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "puntaje": {"type": "integer", "minimum": 1, "maximum": 10},
+            "resumen": {"type": "string"},
+            "observaciones": {
+                "type": "array",
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ruta": {"type": "string", "enum": rutas + ["general"]},
+                        "categoria": {"type": "string", "enum": CATEGORIAS},
+                        "sugerencia": {"type": "string"},
+                        "motivo": {"type": "string", "description": "Explicación breve (máx. 100 caracteres)."},
+                    },
+                    "required": ["ruta", "categoria", "sugerencia", "motivo"],
+                },
+            },
+        },
+        "required": ["puntaje", "resumen", "observaciones"],
+    }
+
+
+def pedido_revision(campos: dict) -> str:
+    lineas = []
+    for ruta, (texto, limite) in campos.items():
+        marca = f" ⚠ EXCEDE ({len(texto)})" if len(texto) > limite else ""
+        lineas.append(f"[{ruta}] (máx. {limite}{marca}) {texto}")
+    return "Revisa estos campos de la infografía:\n\n" + "\n".join(lineas)
+
+
+def limpiar_revision(r: dict, campos: dict) -> dict:
+    """Descarta observaciones inválidas y añade el texto original de cada campo."""
+    obs = []
+    for o in (r.get("observaciones") or [])[:12]:
+        if not isinstance(o, dict):
+            continue
+        ruta = o.get("ruta")
+        sug = (o.get("sugerencia") or "").strip()
+        cat = o.get("categoria") if o.get("categoria") in CATEGORIAS else "claridad"
+        if ruta == "general":
+            obs.append({"ruta": "general", "categoria": cat, "original": "", "sugerencia": "", "motivo": o.get("motivo", "")})
+        elif ruta in campos and sug and sug != campos[ruta][0]:
+            obs.append({"ruta": ruta, "categoria": cat, "original": campos[ruta][0], "sugerencia": sug,
+                        "motivo": (o.get("motivo") or "").strip()})
+    try:
+        puntaje = max(1, min(10, int(r.get("puntaje", 8))))
+    except (TypeError, ValueError):
+        puntaje = 8
+    return {"puntaje": puntaje, "resumen": (r.get("resumen") or "").strip(), "observaciones": obs}
+
+
+@app.route("/api/revisar", methods=["POST"])
+def revisar():
+    datos = (request.get_json(silent=True) or {}).get("datos")
+    if not isinstance(datos, dict):
+        return jsonify(error="No llegó la infografía a revisar."), 400
+    campos = campos_de_texto(datos)
+    if not campos:
+        return jsonify(error="La infografía no tiene textos para revisar."), 400
+    try:
+        r = ia.generar_json(REVISION_SISTEMA, pedido_revision(campos), esquema_revision(list(campos)), nombre="revision")
+    except ia.ErrorIA as e:
+        return jsonify(error=e.mensaje), e.status
+    return jsonify(limpiar_revision(r, campos))
+
+
+@app.route("/api/prompt-revision", methods=["POST"])
+def prompt_revision():
+    """Modo sin API: prompt para pegar en claude.ai y obtener la revisión."""
+    datos = (request.get_json(silent=True) or {}).get("datos")
+    campos = campos_de_texto(datos) if isinstance(datos, dict) else {}
+    if not campos:
+        return jsonify(error="La infografía no tiene textos para revisar."), 400
+    ejemplo = {"puntaje": 8, "resumen": "Buena, con 2 detalles por corregir.",
+               "observaciones": [{"ruta": next(iter(campos)), "categoria": "ortografia",
+                                  "sugerencia": "TEXTO CORREGIDO COMPLETO", "motivo": "Falta una tilde."}]}
+    texto = f"""{REVISION_SISTEMA}
+
+FORMATO DE RESPUESTA (obligatorio): responde ÚNICAMENTE con un bloque ```json en el chat (sin artefactos ni
+archivos), sin texto antes ni después. "ruta" debe ser exactamente una de las rutas entre corchetes o "general".
+"categoria": una de {", ".join(CATEGORIAS)}. Ejemplo de estructura:
+
+```json
+{json.dumps(ejemplo, ensure_ascii=False, indent=2)}
+```
+
+{pedido_revision(campos)}"""
+    return jsonify(prompt=texto)
+
+
+@app.route("/api/limpiar-revision", methods=["POST"])
+def limpiar_revision_pegada():
+    """Valida una revisión pegada desde claude.ai igual que si viniera de la API."""
+    body = request.get_json(silent=True) or {}
+    datos, r = body.get("datos"), body.get("revision")
+    if not isinstance(datos, dict) or not isinstance(r, dict):
+        return jsonify(error="Datos incompletos."), 400
+    return jsonify(limpiar_revision(r, campos_de_texto(datos)))
 
 
 # --------------------------------------------------------------------------

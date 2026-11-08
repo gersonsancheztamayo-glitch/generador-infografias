@@ -13,9 +13,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
-      - key: CLAUDE_MODEL
-        value: claude-sonnet-5-5
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
       - key: MAX_INPUT_CHARS
         value: "8000"
-      # Opcional: para activar «Generar con IA», añade ANTHROPIC_API_KEY en
-      # Render → tu servicio → Environment. Sin ella, la web usa el modo gratis (copiar/pegar con Claude Pro).
+      # Activa «Generar» y «Revisar con IA» (gratis). Render te la pedirá al crear el servicio;
+      # puedes dejarla vacía y la web usará el modo copiar/pegar con Claude Pro.
+      - key: GEMINI_API_KEY
+        sync: false

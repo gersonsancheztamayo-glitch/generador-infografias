@@ -6,18 +6,33 @@ Herramienta web para convertir texto en sucio en infografías de capacitación t
 - **Frontend:** HTML + Tailwind CSS (`templates/index.html`, `static/js/render.js`).
 - **Exportación:** html2canvas-pro (`static/vendor/`) para generar el PNG en el navegador.
 
-## Dos formas de generar el contenido
+## Cómo funciona
 
-1. **Gratis con Claude Pro (sin API):** pega tu texto → «Copiar prompt» → pégalo en claude.ai
-   (puedes adjuntar imágenes de referencia) → copia la respuesta → «Crear infografía».
-   La web repara automáticamente errores menores de la respuesta.
-2. **Con API (opcional):** añade `ANTHROPIC_API_KEY` en Render → Environment y se activa
-   «Generar con IA» en un clic. Consume saldo de la API de Anthropic (se cobra aparte del plan Pro).
+1. **Contenido:** pega tu texto en sucio y, si quieres, hasta 4 **imágenes de referencia**
+   (capturas, fotos, infografías antiguas; también con Ctrl+V o arrastrando). Pulsa **Generar con IA**.
+2. **Diseño:** formato, colores, fotos por sección, logo. Clic en cualquier texto para corregirlo.
+3. **Revisión con IA antes de descargar:** detecta faltas de ortografía, siglas inconsistentes,
+   frases confusas, textos demasiado largos y datos de clientes. Eliges qué correcciones aplicar
+   (y puedes editarlas). Si cambias algo después, la web vuelve a pedir revisión.
+
+### ¿Qué IA usa?
+| Configuración | Generar y revisar | Costo |
+|---|---|---|
+| `GEMINI_API_KEY` (recomendado) | En un clic, lee texto e imágenes | Gratis (plan gratuito de Google AI Studio) |
+| `ANTHROPIC_API_KEY` | En un clic | Pago por uso |
+| Ninguna clave | Copiar/pegar con tu Claude Pro | Gratis |
+
+⚠ En el plan gratuito de Gemini, Google puede usar lo enviado para mejorar sus modelos.
+No subas datos personales de clientes.
+
+**Obtener la clave de Gemini:** https://aistudio.google.com → *Get API key* → *Create API key*.
+Pégala en Render → tu servicio → *Environment* → `GEMINI_API_KEY`.
 
 ## Estructura
 
 ```
-app.py                  Servidor Flask y llamada a Claude
+app.py                  Servidor Flask: generar, revisar, prompts del modo copiar/pegar
+ia.py                   Conexión con Gemini (preferido) o Claude
 templates/index.html    Página principal (panel + vista previa)
 static/js/render.js     Dibuja la infografía a partir del JSON
 static/js/app.js        Edición en vivo, llamada a la IA y descarga PNG
@@ -50,6 +65,8 @@ npm run build:css
 
 | Variable | Descripción | Por defecto |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Clave de la API de Anthropic (opcional: activa «Generar con IA») | — |
-| `CLAUDE_MODEL` | Modelo a usar | `claude-sonnet-5-5` |
+| `GEMINI_API_KEY` | Clave gratuita de Google AI Studio (activa «Generar» y «Revisar con IA») | — |
+| `GEMINI_MODEL` | Modelo de Gemini | `gemini-flash-latest` |
+| `ANTHROPIC_API_KEY` | Alternativa de pago: API de Anthropic | — |
+| `CLAUDE_MODEL` | Modelo de Claude | `claude-sonnet-5-5` |
 | `MAX_INPUT_CHARS` | Máximo de caracteres del texto de entrada | `8000` |
