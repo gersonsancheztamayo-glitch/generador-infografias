@@ -88,13 +88,13 @@ INFOGRAFIA_TOOL = {
                         "icono": {"type": "string", "enum": ICONOS},
                         "descripcion": {
                             "type": "string",
-                            "description": "1-2 frases, máx. 160 caracteres. Puede ir vacía.",
+                            "description": "1 frase, máx. 90 caracteres. Puede ir vacía.",
                         },
                         "puntos": {
                             "type": "array",
-                            "maxItems": 5,
+                            "maxItems": 4,
                             "items": {"type": "string"},
-                            "description": "Viñetas con check, máx. 70 caracteres cada una.",
+                            "description": "Viñetas con check: máx. 3, de 3 a 8 palabras cada una.",
                         },
                         "chips": {
                             "type": "array",
@@ -112,7 +112,7 @@ INFOGRAFIA_TOOL = {
                             "description": "Mensaje resaltado al pie de la sección. Opcional.",
                             "properties": {
                                 "tipo": {"type": "string", "enum": ["ok", "alerta", "error", "info"]},
-                                "texto": {"type": "string", "description": "Máx. 110 caracteres."},
+                                "texto": {"type": "string", "description": "Máx. 70 caracteres."},
                             },
                             "required": ["tipo", "texto"],
                         },
@@ -161,12 +161,17 @@ Tu tarea: transformar el texto desordenado del usuario en el contenido de UNA in
 Reglas:
 - Español neutro de Perú, directo, en segunda persona ("Mantén", "Verifica", "Escala").
 - Respeta los términos técnicos y siglas del texto tal como vienen (TCP, TCE, OFSC, NAP, ONT, etc.).
-- No inventes datos (valores, metrajes, normas, teléfonos) que no estén en el texto.
+- No inventes datos (valores, metrajes, teléfonos). NUNCA menciones normas, leyes, resoluciones ni códigos \
+(NTP, ISO, NTC, Res., etc.) que no aparezcan literalmente en el texto del usuario.
 - Divide el contenido en 1 a 6 secciones temáticas (ideal: 3 o 4, para que se lea bien en el celular);
   cada una se numera automáticamente.
-- Sé breve: las infografías se leen en segundos. Prefiere viñetas cortas a párrafos.
-- Varía los colores de las secciones (azul, verde, morado, naranja…). Usa "rojo" solo para \
-prohibiciones o errores.
+- Escribe como un afiche, no como un manual: la infografía tiene un tamaño fijo y se lee en segundos.
+  · Descripción: 1 frase de máx. 90 caracteres (o vacía). Viñetas: máx. 3 por sección, de 3 a 8 palabras.
+  · Destacado: 1 frase de máx. 70 caracteres. Títulos de sección: 2 a 4 palabras.
+  · Total de la infografía: idealmente menos de 120 palabras.
+- Colores de sección sobrios, como un afiche corporativo: usa sobre todo "azul", y alterna con "verde" y \
+"morado". Usa "naranja", "rojo" o "celeste" solo cuando el color tenga significado (p. ej. advertencia, \
+prohibición o un código de colores).
 - Usa "destacado" para la idea clave de la sección: "ok" para buenas prácticas, "error" para lo \
 que NO se debe hacer, "alerta" para precauciones, "info" para datos.
 - Usa "chips" solo si hay conceptos cortos que se lucen mejor como íconos.
@@ -246,7 +251,7 @@ Usa exactamente estos nombres de campos (este es solo un ejemplo de la estructur
 
 Reglas del JSON:
 - "titulo_linea1" y "titulo_linea2": MAYÚSCULAS, máx. 24 caracteres cada una.
-- "secciones": de 1 a 6. "titulo" en MAYÚSCULAS (máx. 32 caracteres), "puntos": máx. 5 de máx. 70 caracteres.
+- "secciones": de 1 a 6 (ideal 3-4). "titulo" en MAYÚSCULAS (2 a 4 palabras), "puntos": máx. 3 de 3 a 8 palabras.
 - "color": uno de {", ".join(COLORES)}.
 - "icono" (en secciones, chips y verificación): uno de {", ".join(ICONOS)}.
 - "destacado.tipo": ok, alerta, error o info.

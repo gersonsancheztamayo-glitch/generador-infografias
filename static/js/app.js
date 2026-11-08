@@ -64,6 +64,7 @@ const OPCIONES_DEFECTO = {
   logo: "",
   cabecera: "",
   revisarAntes: true,
+  encajar: true,
 };
 
 /* ---------- estado ---------- */
@@ -98,12 +99,28 @@ const marco = $("#marco");
 
 function render({ guardarHistorial = true } = {}) {
   datos.secciones ||= [];
-  lienzo.innerHTML = Render.renderInfografia(datos, opciones);
-  Render.ajustarTitulos(lienzo);
+  const dibujar = (op) => {
+    lienzo.innerHTML = Render.renderInfografia(datos, op);
+    return Render.encajarEnFormato(lienzo, op.encajar); // incluye el ajuste de títulos
+  };
+  if (opciones.distribucion === "auto" && opciones.encajar && datos.secciones.length) {
+    // Prueba cada distribución y se queda con la que permite la letra más grande.
+    let mejor = null;
+    for (const modo of Render.candidatas(datos, opciones)) {
+      const k = dibujar({ ...opciones, distribucion: modo });
+      if (!mejor || k > mejor.k + 0.02) mejor = { modo, k };
+    }
+    dibujar({ ...opciones, distribucion: mejor.modo });
+    distribucionElegida = mejor.modo;
+  } else {
+    dibujar(opciones);
+    distribucionElegida = null;
+  }
   ajustarEscala();
   guardarLocal();
   if (guardarHistorial) registrarHistorial();
 }
+let distribucionElegida = null;
 
 /* ---------- deshacer (guarda los últimos 30 cambios) ---------- */
 const historial = [];
@@ -135,16 +152,20 @@ function ajustarEscala() {
   if (!info) return;
   const ancho = info.offsetWidth;
   const disponible = marco.clientWidth;
-  const k = Math.min(1, disponible / ancho);
-  escala.style.transform = `scale(${k})`;
+  const vista = Math.min(1, disponible / ancho); // reducción solo para la vista previa
+  escala.style.transform = `scale(${vista})`;
   escala.style.width = ancho + "px";
-  marco.style.height = info.offsetHeight * k + "px";
-  const ideal = ancho === 1080 ? 1620 : 1080; // proporción 2:3 o 3:2
-  const larga = info.offsetHeight > ideal * 1.6;
+  marco.style.height = info.offsetHeight * vista + "px";
+  const k = Number(info.dataset.k) || 1; // escala de «Encajar en el formato»
+  const ideal = Number(info.dataset.alto) || 1620; // alto del formato 2:3 o 3:2
+  const anchoFinal = Number(info.dataset.ancho) || ancho;
+  const altoFinal = Math.round(info.offsetHeight * k);
+  const larga = altoFinal > ideal * 1.04;
   const dim = $("#dimensiones");
-  dim.textContent = `${ancho} × ${info.offsetHeight} px` + (larga ? " · ⚠ muy larga para celular" : "");
+  const nombres = { lista: "lista", cuadricula: "cuadrícula", columnas: "columnas" };
+  dim.textContent = `${anchoFinal} × ${altoFinal} px` + (distribucionElegida ? ` · ${nombres[distribucionElegida]}` : "") + (k < 1 ? ` · escala ${Math.round(k * 100)}%` : "") + (larga ? " · ⚠ no cabe: resume textos" : "");
   dim.className = `font-mono text-xs border rounded px-2 py-1 ${larga ? "bg-amber-50 border-amber-300 text-amber-800" : "bg-white border-slate-200"}`;
-  dim.title = larga ? "Se leerá con letra pequeña en WhatsApp. Resume textos, quita secciones o usa formato horizontal." : "";
+  dim.title = larga ? "Hay más texto del que cabe en el formato. Acorta textos o quita una sección para que se lea bien en el celular." : "";
 }
 new ResizeObserver(ajustarEscala).observe(marco);
 
@@ -377,7 +398,7 @@ document.querySelectorAll("[data-opcion]").forEach((el) => {
   el.addEventListener(el.type === "text" ? "input" : "change", () => {
     if (el.type === "radio" && !el.checked) return;
     opciones[clave] = el.type === "checkbox" ? el.checked : el.value;
-    if (el.type === "checkbox") guardarLocal();
+    if (clave === "revisarAntes") guardarLocal();
     else render();
   });
 });
@@ -610,8 +631,9 @@ async function exportarPNG() {
   document.activeElement?.blur();
   await document.fonts.ready;
   const info = $("#infografia");
+  const k = Number(info.dataset.k) || 1; // escala de «Encajar en el formato»
   const canvas = await html2canvas(info, {
-    scale: Number(opciones.calidad) || 1,
+    scale: (Number(opciones.calidad) || 1) * k,
     backgroundColor: null,
     useCORS: true,
     logging: false,

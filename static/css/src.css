@@ -28,7 +28,7 @@
   .info-title { line-height: .98; letter-spacing: -.01em; white-space: nowrap; }
 
   /* Secciones */
-  .sec { background: linear-gradient(180deg, #ffffff 0%, var(--s2) 100%); border: 3px solid var(--b); box-shadow: 0 10px 28px -12px rgba(8, 30, 110, .35); }
+  .sec { background: #ffffff; border: 2px solid #d5e2fb; box-shadow: 0 10px 26px -14px rgba(8, 30, 110, .45); }
   .sec-num { position: absolute; left: 0; top: 50%; margin-top: -46px; width: 92px; height: 92px; border-radius: 9999px;
              background: var(--c); border: 7px solid #fff; box-shadow: 0 6px 16px -4px rgba(8,30,110,.45); color: #fff;
              text-align: center; font-size: 50px; line-height: 78px; font-weight: 900; cursor: pointer; }
@@ -43,7 +43,7 @@
   .tile { background: var(--s); border-radius: 28px; }
   .foto { border: 5px solid #fff; border-radius: 22px; box-shadow: 0 8px 20px -8px rgba(8,30,110,.45); }
   .dest { background: var(--ds); border: 2px solid var(--db); border-radius: 18px; }
-  .dest-ic { flex: none; width: 54px; height: 54px; border-radius: 9999px; background: var(--dc);
+  .dest-ic { flex: none; width: 46px; height: 46px; border-radius: 9999px; background: var(--dc);
              display: flex; align-items: center; justify-content: center; }
 
   /* Bloques finales */
