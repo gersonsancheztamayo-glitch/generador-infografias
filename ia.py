@@ -138,8 +138,11 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
         response_json_schema=esquema,
         temperature=0.4,
     )
+    # Orden de intentos: modelo actual (2 veces si está saturado) y luego los de respaldo.
+    cola = list(_modelos_gemini)
+    reintentado = False
     while True:
-        modelo = _modelos_gemini[0]
+        modelo = cola[0]
         try:
             r = _gemini.models.generate_content(model=modelo, contents=partes, config=config)
             intentos.append({"modelo": modelo, "resultado": "ok"})
@@ -149,9 +152,22 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
             intentos.append({"modelo": modelo, "resultado": tecnico[:300]})
             log.warning("Error de Gemini (%s) %s", modelo, tecnico)
             msg = (e.message or "").lower()
-            if e.code == 404 and len(_modelos_gemini) > 1:
-                _modelos_gemini.pop(0)  # modelo retirado: se recuerda y se pasa al siguiente
+            if e.code == 404 and len(cola) > 1:
+                cola.pop(0)
+                if modelo in _modelos_gemini and len(_modelos_gemini) > 1:
+                    _modelos_gemini.remove(modelo)  # modelo retirado: no se vuelve a intentar
                 continue
+            if e.code in (500, 502, 503, 504):  # Google saturado o fallo temporal
+                if not reintentado:
+                    reintentado = True
+                    time.sleep(2)
+                    continue
+                if len(cola) > 1:  # sigue saturado: probar el siguiente modelo (sin descartarlo para el futuro)
+                    cola.pop(0)
+                    reintentado = False
+                    continue
+                raise ErrorIA("Los servidores de Gemini están saturados en este momento. Espera un minuto y "
+                              "vuelve a intentar, o usa el modo copiar/pegar con Claude Pro.", 503, tecnico)
             if e.code in (401, 403) or "api key" in msg or "api_key" in msg:
                 raise ErrorIA("Google rechazó la GEMINI_API_KEY (no es válida o no tiene permiso). "
                               "Revísala en aistudio.google.com.", 500, tecnico)
@@ -164,7 +180,7 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
                               500, tecnico)
             if e.code == 400:
                 raise ErrorIA("Gemini rechazó la solicitud (400). Mira el detalle en el Registro.", 502, tecnico)
-            raise ErrorIA("Gemini no respondió correctamente. Inténtalo de nuevo.", 502, tecnico)
+            raise ErrorIA(f"Gemini respondió con un error ({e.code}). Mira el detalle en el Registro.", 502, tecnico)
         except Exception as e:  # sin conexión, tiempo agotado, etc.
             tecnico = f"{type(e).__name__}: {e}"
             intentos.append({"modelo": modelo, "resultado": tecnico[:300]})
