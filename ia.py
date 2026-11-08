@@ -129,6 +129,9 @@ def generar_json(sistema: str, texto: str, esquema: dict, imagenes=None, nombre=
     return resultado
 
 
+_esquema_aceptado: dict = {}  # se pone en False si Google no acepta response_json_schema
+
+
 def _gemini_json(sistema, texto, esquema, imagenes, intentos):
     partes = [gemini_types.Part.from_bytes(data=d, mime_type=t) for t, d in imagenes]
     partes.append(gemini_types.Part.from_text(text=texto))
@@ -138,14 +141,23 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
         response_json_schema=esquema,
         temperature=0.4,
     )
+    # Plan B si Google rechaza el esquema (400): el esquema va como texto en las instrucciones.
+    config_sin_esquema = gemini_types.GenerateContentConfig(
+        system_instruction=sistema + "\n\nResponde SOLO con un objeto JSON válido que cumpla este JSON Schema "
+        "(sin texto adicional):\n" + json.dumps(esquema, ensure_ascii=False),
+        response_mime_type="application/json",
+        temperature=0.4,
+    )
+    usar_esquema = _esquema_aceptado.get("ok", True)
     # Orden de intentos: modelo actual (2 veces si está saturado) y luego los de respaldo.
     cola = list(_modelos_gemini)
     reintentado = False
     while True:
         modelo = cola[0]
         try:
-            r = _gemini.models.generate_content(model=modelo, contents=partes, config=config)
-            intentos.append({"modelo": modelo, "resultado": "ok"})
+            r = _gemini.models.generate_content(
+                model=modelo, contents=partes, config=config if usar_esquema else config_sin_esquema)
+            intentos.append({"modelo": modelo, "resultado": "ok" if usar_esquema else "ok (esquema como texto)"})
             break
         except gemini_errors.APIError as e:
             tecnico = f"{e.code} {e.status or ''}: {e.message}".strip()
@@ -178,6 +190,11 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
             if e.code == 404:
                 raise ErrorIA("Ningún modelo de Gemini respondió. Revisa la variable GEMINI_MODEL en Render.",
                               500, tecnico)
+            if e.code == 400 and usar_esquema:
+                usar_esquema = False  # reintentar con el esquema como texto
+                _esquema_aceptado["ok"] = False  # y recordarlo para las siguientes llamadas
+                log.warning("Gemini rechazó el esquema; se usará como texto. Detalle: %s", tecnico)
+                continue
             if e.code == 400:
                 raise ErrorIA("Gemini rechazó la solicitud (400). Mira el detalle en el Registro.", 502, tecnico)
             raise ErrorIA(f"Gemini respondió con un error ({e.code}). Mira el detalle en el Registro.", 502, tecnico)
@@ -187,8 +204,10 @@ def _gemini_json(sistema, texto, esquema, imagenes, intentos):
             log.exception("Fallo de conexión con Gemini")
             raise ErrorIA("No se pudo conectar con Gemini. Inténtalo de nuevo en un momento.", 502, tecnico)
 
+    texto_r = (r.text or "").strip()
+    m = re.search(r"\{.*\}", texto_r, re.S)  # por si llega con ```json … ``` alrededor
     try:
-        return json.loads(r.text)
+        return json.loads(m.group(0) if m else texto_r)
     except (TypeError, ValueError):
         raise ErrorIA("Gemini devolvió una respuesta incompleta. Inténtalo de nuevo.", 502,
                       f"Respuesta no JSON: {(r.text or '')[:300]!r}")
