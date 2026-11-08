@@ -16,6 +16,7 @@ load_dotenv()  # Lee .env en local (antes de importar ia.py). En Render se usan 
 from flask import Flask, jsonify, render_template, request  # noqa: E402
 
 import ia  # noqa: E402
+import registro  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("infografias")
@@ -286,7 +287,8 @@ def generar():
             pedido += (f" Usa también las {len(imagenes)} imagen(es) adjuntas (numeradas en orden desde 1): "
                        "extrae su contenido y, en cada sección, indica en «imagen» cuál la ilustra mejor.")
         pedido += f"\n\n<texto>\n{texto or '(Sin texto: usa solo las imágenes.)'}\n</texto>"
-        resultado = ia.generar_json(SYSTEM_PROMPT, pedido, INFOGRAFIA_TOOL["input_schema"], imagenes, "generar_infografia")
+        resultado = ia.generar_json(SYSTEM_PROMPT, pedido, INFOGRAFIA_TOOL["input_schema"], imagenes, "generar_infografia",
+                                    accion="generar")
     except ia.ErrorIA as e:
         return jsonify(error=e.mensaje), e.status
     return jsonify(resultado)
@@ -415,7 +417,8 @@ def revisar():
     if not campos:
         return jsonify(error="La infografía no tiene textos para revisar."), 400
     try:
-        r = ia.generar_json(REVISION_SISTEMA, pedido_revision(campos), esquema_revision(list(campos)), nombre="revision")
+        r = ia.generar_json(REVISION_SISTEMA, pedido_revision(campos), esquema_revision(list(campos)), nombre="revision",
+                           accion="revisar")
     except ia.ErrorIA as e:
         return jsonify(error=e.mensaje), e.status
     return jsonify(limpiar_revision(r, campos))
@@ -453,6 +456,32 @@ def limpiar_revision_pegada():
     if not isinstance(datos, dict) or not isinstance(r, dict):
         return jsonify(error="Datos incompletos."), 400
     return jsonify(limpiar_revision(r, campos_de_texto(datos)))
+
+
+# --------------------------------------------------------------------------
+# Registro y diagnóstico
+# --------------------------------------------------------------------------
+@app.route("/api/registro")
+def ver_registro():
+    return jsonify(eventos=registro.leer(150))
+
+
+@app.route("/api/registro", methods=["DELETE"])
+def borrar_registro():
+    registro.limpiar()
+    return jsonify(ok=True)
+
+
+@app.route("/api/diagnostico", methods=["POST"])
+def diagnostico():
+    return jsonify(ia.diagnostico())
+
+
+@app.errorhandler(500)
+def error_interno(e):
+    original = getattr(e, "original_exception", e)
+    registro.registrar("error del servidor", False, f"{type(original).__name__}: {original}", ruta=request.path)
+    return jsonify(error="Error interno del servidor. Mira el detalle en el Registro."), 500
 
 
 # --------------------------------------------------------------------------

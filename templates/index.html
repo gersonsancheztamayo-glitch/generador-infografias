@@ -18,6 +18,10 @@
       </div>
       <h1 class="font-display font-extrabold tracking-tight">Generador de Infografías</h1>
       <span class="hidden sm:inline text-white/60 text-sm">· capacitaciones técnicas en 1 clic</span>
+      <button id="btn-registro" type="button" class="ml-auto flex items-center gap-2 rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-sm font-semibold">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        Registro <span id="registro-alerta" hidden class="w-2 h-2 rounded-full bg-red-400"></span>
+      </button>
     </div>
   </header>
 
@@ -231,6 +235,47 @@
       </header>
       <div id="rev-cuerpo" class="overflow-y-auto px-5 py-4 flex flex-col gap-3 text-sm"></div>
       <footer id="rev-pie" class="flex flex-wrap items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50"></footer>
+    </div>
+  </dialog>
+
+  <!-- ===== Registro (diagnóstico) ===== -->
+  <dialog id="dlg-registro" class="rounded-2xl shadow-2xl p-0 w-[min(980px,96vw)] max-h-[90vh] backdrop:bg-slate-900/50">
+    <div class="flex flex-col max-h-[90vh]">
+      <header class="flex items-center gap-3 px-5 py-4 border-b border-slate-200">
+        <div class="min-w-0 flex-1">
+          <h2 class="font-display font-extrabold text-slate-900">Registro</h2>
+          <p class="text-sm text-slate-500">Qué pasó en cada intento de generar o revisar. Útil para encontrar fallos.</p>
+        </div>
+        <button type="button" data-cerrar class="w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-500 text-xl" title="Cerrar">×</button>
+      </header>
+      <div class="overflow-y-auto px-5 py-4 flex flex-col gap-4 text-sm">
+        <section class="rounded-xl border border-slate-200 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="font-bold text-slate-800">Conexión con la IA</h3>
+            <button id="btn-probar" type="button" class="h-9 px-4 rounded-lg bg-[#1746d4] hover:bg-[#0d2a9a] text-white font-semibold">Probar conexión</button>
+          </div>
+          <div id="diag" class="mt-3 text-slate-600">Pulsa «Probar conexión» para verificar la clave y el modelo.</div>
+        </section>
+        <section>
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h3 class="font-bold text-slate-800">Eventos recientes</h3>
+            <div class="flex gap-2">
+              <button id="btn-reg-actualizar" type="button" class="h-8 px-3 rounded-lg border border-slate-300 hover:bg-slate-50 font-semibold text-slate-700">Actualizar</button>
+              <button id="btn-reg-copiar" type="button" class="h-8 px-3 rounded-lg border border-slate-300 hover:bg-slate-50 font-semibold text-slate-700">Copiar registro</button>
+              <button id="btn-reg-limpiar" type="button" class="h-8 px-3 rounded-lg border border-slate-300 hover:bg-slate-50 font-semibold text-red-600">Limpiar</button>
+            </div>
+          </div>
+          <div class="rounded-xl border border-slate-200 overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-50 text-slate-500 uppercase">
+                <tr><th class="px-3 py-2">Hora</th><th class="px-3 py-2">Origen</th><th class="px-3 py-2">Acción</th><th class="px-3 py-2">Estado</th><th class="px-3 py-2">Detalle</th></tr>
+              </thead>
+              <tbody id="reg-filas" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-2">El registro del servidor se borra cuando Render duerme o redespliega el servicio. Nunca guarda tu clave ni tus textos.</p>
+        </section>
+      </div>
     </div>
   </dialog>
 

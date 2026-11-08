@@ -68,6 +68,7 @@ const OPCIONES_DEFECTO = {
 
 /* ---------- estado ---------- */
 const $ = (sel) => document.querySelector(sel);
+const registroWeb = []; // eventos del navegador para el apartado «Registro» (esta pestaña)
 const clonar = (o) => JSON.parse(JSON.stringify(o));
 const sinPrivados = (k, v) => (k.startsWith("_") ? undefined : v); // quita fotos (_img) del JSON
 
@@ -149,6 +150,7 @@ new ResizeObserver(ajustarEscala).observe(marco);
 
 /* ---------- mensajes ---------- */
 function aviso(texto, tipo = "info") {
+  if (texto && tipo !== "info") registrarWeb(tipo === "error" ? "aviso de error" : "aviso", tipo !== "error", texto);
   const el = $("#aviso");
   const estilos = {
     info: "bg-blue-50 text-blue-900 border-blue-200",
@@ -721,6 +723,7 @@ async function revisarConAPI() {
     if (!r.ok) throw new Error(json.error || `Error ${r.status}`);
     if (dlg.open) mostrarResultado(json);
   } catch (err) {
+    registrarWeb("revisar", false, err.message);
     $("#rev-resumen").textContent = "No se pudo completar la revisión.";
     $("#rev-cuerpo").innerHTML = `<p class="rounded-lg bg-red-50 border border-red-200 text-red-800 p-3">${escHTML(err.message)}</p>`;
     $("#rev-pie").innerHTML = botonPie("Cerrar", "cerrar") + botonPie("Revisar con Claude Pro", "manual") +
@@ -869,6 +872,114 @@ dlg.addEventListener("click", async (e) => {
 });
 
 $("#btn-revisar").addEventListener("click", () => abrirRevision());
+
+/* =====================================================================
+   REGISTRO (diagnóstico)
+   ===================================================================== */
+function registrarWeb(accion, ok, detalle) {
+  registroWeb.push({ t: Date.now() / 1000, origen: "navegador", accion, ok, detalle: String(detalle).slice(0, 500) });
+  if (registroWeb.length > 100) registroWeb.shift();
+  if (!ok) $("#registro-alerta").hidden = false;
+}
+window.addEventListener("error", (e) => registrarWeb("error de la página", false, `${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("unhandledrejection", (e) => registrarWeb("error de la página", false, e.reason?.message || String(e.reason)));
+
+const dlgReg = $("#dlg-registro");
+const horaLocal = (t) => new Date(t * 1000).toLocaleString("es-PE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+let eventosMostrados = [];
+
+function detalleEvento(e) {
+  const partes = [escHTML(e.detalle || "")];
+  const datos = [];
+  if (e.proveedor) datos.push(`IA: ${e.proveedor}`);
+  if (e.modelo) datos.push(`modelo: ${e.modelo}`);
+  if (e.segundos != null) datos.push(`${e.segundos} s`);
+  if (e.imagenes) datos.push(`${e.imagenes} imagen(es)`);
+  if (datos.length) partes.push(`<span class="text-slate-400">${escHTML(datos.join(" · "))}</span>`);
+  if (e.tecnico) partes.push(`<code class="block mt-1 whitespace-pre-wrap break-all rounded bg-red-50 text-red-800 px-2 py-1">${escHTML(e.tecnico)}</code>`);
+  if (e.intentos?.length > 1 || (e.intentos?.length && !e.ok))
+    partes.push(`<span class="block text-slate-400">Intentos: ${escHTML(e.intentos.map((i) => `${i.modelo} → ${i.resultado || "?"}`).join(" | "))}</span>`);
+  return partes.join("<br>");
+}
+
+async function cargarRegistro() {
+  let servidor = [];
+  try {
+    servidor = (await (await fetch("/api/registro")).json()).eventos || [];
+  } catch (err) {
+    registrarWeb("leer registro", false, "No se pudo leer el registro del servidor: " + err.message);
+  }
+  eventosMostrados = [...servidor, ...registroWeb].sort((a, b) => b.t - a.t);
+  $("#reg-filas").innerHTML = eventosMostrados.length
+    ? eventosMostrados.map((e) => `
+      <tr class="align-top ${e.ok ? "" : "bg-red-50/40"}">
+        <td class="px-3 py-2 whitespace-nowrap text-slate-500">${horaLocal(e.t)}</td>
+        <td class="px-3 py-2 whitespace-nowrap">${e.origen === "servidor" ? "🖥 Servidor" : "🌐 Navegador"}</td>
+        <td class="px-3 py-2 whitespace-nowrap font-semibold text-slate-700">${escHTML(e.accion)}</td>
+        <td class="px-3 py-2 whitespace-nowrap">${e.ok ? "✅ OK" : "❌ Error"}</td>
+        <td class="px-3 py-2 text-slate-700">${detalleEvento(e)}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="5" class="px-3 py-6 text-center text-slate-400">Aún no hay eventos. Prueba «Generar con IA» o «Probar conexión».</td></tr>`;
+}
+
+$("#btn-registro").addEventListener("click", () => {
+  $("#registro-alerta").hidden = true;
+  dlgReg.showModal();
+  cargarRegistro();
+});
+dlgReg.addEventListener("click", (e) => {
+  if (e.target === dlgReg || e.target.closest("[data-cerrar]")) dlgReg.close();
+});
+$("#btn-reg-actualizar").addEventListener("click", cargarRegistro);
+$("#btn-reg-limpiar").addEventListener("click", async () => {
+  registroWeb.length = 0;
+  await fetch("/api/registro", { method: "DELETE" }).catch(() => {});
+  cargarRegistro();
+});
+$("#btn-reg-copiar").addEventListener("click", async (e) => {
+  const texto = eventosMostrados.map((ev) =>
+    [horaLocal(ev.t), ev.origen, ev.accion, ev.ok ? "OK" : "ERROR", ev.detalle, ev.modelo && `modelo=${ev.modelo}`,
+     ev.segundos != null && `${ev.segundos}s`, ev.tecnico && `técnico=${ev.tecnico}`,
+     ev.intentos?.length && `intentos=${ev.intentos.map((i) => `${i.modelo}→${i.resultado}`).join(" | ")}`]
+      .filter(Boolean).join(" · ")).join("\n");
+  try {
+    await copiarAlPortapapeles(texto || "(registro vacío)");
+    e.target.textContent = "✅ Copiado";
+  } catch {
+    e.target.textContent = "No se pudo copiar";
+  }
+  setTimeout(() => (e.target.textContent = "Copiar registro"), 2000);
+});
+
+$("#btn-probar").addEventListener("click", async () => {
+  const btn = $("#btn-probar");
+  const diag = $("#diag");
+  btn.disabled = true;
+  btn.textContent = "Probando…";
+  diag.innerHTML = `<span class="text-slate-500">Enviando una prueba corta a la IA…</span>`;
+  try {
+    const d = await (await fetch("/api/diagnostico", { method: "POST" })).json();
+    const fila = (ok, txt) => `<li class="flex gap-2"><span>${ok === null ? "➖" : ok ? "✅" : "❌"}</span><span>${txt}</span></li>`;
+    const p = d.prueba || {};
+    diag.innerHTML = `<ul class="flex flex-col gap-1">
+      ${fila(!!d.proveedor, d.proveedor ? `IA configurada: <b>${escHTML(d.proveedor)}</b>` : "No hay ninguna API key configurada en el servidor")}
+      ${fila(d.gemini_clave, d.gemini_clave
+        ? `GEMINI_API_KEY presente (${d.gemini_clave_largo} caracteres) · formato ${escHTML(d.gemini_clave_formato)}`
+        : "GEMINI_API_KEY no está configurada en Render → Environment")}
+      ${d.gemini_clave_tenia_espacios ? fila(false, "La clave tenía espacios o saltos de línea al inicio/final (se quitaron automáticamente; conviene corregirla en Render)") : ""}
+      ${d.gemini_clave ? fila(null, `Modelo configurado: <code>${escHTML(d.gemini_modelo_configurado)}</code> · orden de prueba: <code>${escHTML((d.gemini_modelos_en_cola || []).join(" → "))}</code>`) : ""}
+      ${fila(p.ok, `<b>Prueba real:</b> ${escHTML(p.mensaje || "")}${p.modelo ? ` (modelo <code>${escHTML(p.modelo)}</code>)` : ""}${p.segundos != null ? ` · ${p.segundos} s` : ""}`)}
+      ${p.tecnico ? `<li><code class="block whitespace-pre-wrap break-all rounded bg-red-50 text-red-800 px-2 py-1 mt-1">${escHTML(p.tecnico)}</code></li>` : ""}
+    </ul>`;
+    if (p.ok && !IA.ia) location.reload();
+  } catch (err) {
+    diag.innerHTML = `<p class="text-red-700">No se pudo contactar con el servidor: ${escHTML(err.message)}. Si el servicio estaba dormido, espera un minuto y vuelve a probar.</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Probar conexión";
+    cargarRegistro();
+  }
+});
 
 /* ---------- compartir (celular: WhatsApp, Telegram, etc.) ---------- */
 const btnCompartir = $("#btn-compartir");
