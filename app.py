@@ -101,6 +101,11 @@ INFOGRAFIA_TOOL = {
                             "items": ITEM_ICONO,
                             "description": "Conceptos clave con ícono (ej. Respeto, Amabilidad). Opcional.",
                         },
+                        "imagen": {
+                            "type": "integer",
+                            "description": "Número de la imagen de referencia (1, 2, 3…) que mejor ilustra esta "
+                            "sección; 0 si ninguna encaja. No repitas el mismo número en dos secciones. Opcional.",
+                        },
                         "destacado": {
                             "type": "object",
                             "description": "Mensaje resaltado al pie de la sección. Opcional.",
@@ -184,7 +189,8 @@ def index():
 @app.route("/health")
 def health():
     """Endpoint ligero para que Render verifique que el servicio está vivo."""
-    return jsonify(status="ok", ia=ia.proveedor())
+    return jsonify(status="ok", ia=ia.proveedor(),
+                   modelo=ia._modelos_gemini[0] if ia.proveedor() == "gemini" else None)
 
 
 @app.route("/api/config")
@@ -277,7 +283,8 @@ def generar():
             return jsonify(error=f"El texto supera el máximo de {MAX_INPUT_CHARS} caracteres."), 400
         pedido = "Convierte este contenido en una infografía."
         if imagenes:
-            pedido += f" Usa también las {len(imagenes)} imagen(es) de referencia adjuntas."
+            pedido += (f" Usa también las {len(imagenes)} imagen(es) adjuntas (numeradas en orden desde 1): "
+                       "extrae su contenido y, en cada sección, indica en «imagen» cuál la ilustra mejor.")
         pedido += f"\n\n<texto>\n{texto or '(Sin texto: usa solo las imágenes.)'}\n</texto>"
         resultado = ia.generar_json(SYSTEM_PROMPT, pedido, INFOGRAFIA_TOOL["input_schema"], imagenes, "generar_infografia")
     except ia.ErrorIA as e:

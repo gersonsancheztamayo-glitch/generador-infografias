@@ -450,6 +450,26 @@ zonaTexto.addEventListener("drop", (e) => {
   if (e.dataTransfer.files.length) agregarReferencias(e.dataTransfer.files);
 });
 
+/* Coloca las imágenes de referencia en las secciones: primero donde la IA indicó («imagen»),
+   luego en orden en las secciones que sigan sin foto. Devuelve cuántas se colocaron. */
+function colocarReferencias(crudo) {
+  if (!referencias.length || !$("#usar-referencias").checked) return 0;
+  const usadas = new Set();
+  (crudo?.secciones || []).forEach((s, i) => {
+    const n = Number(s?.imagen) - 1;
+    if (datos.secciones[i] && n >= 0 && n < referencias.length && !usadas.has(n)) {
+      datos.secciones[i]._img = referencias[n];
+      usadas.add(n);
+    }
+  });
+  const libres = referencias.map((_, n) => n).filter((n) => !usadas.has(n));
+  datos.secciones.forEach((sec) => {
+    if (!sec._img && libres.length) { sec._img = referencias[libres.shift()]; }
+  });
+  return referencias.length - libres.length;
+}
+const textoFotos = (n) => (n ? ` Se colocaron ${n} imagen(es) en las secciones: pasa el mouse por una sección para cambiarla o quitarla.` : "");
+
 /* ---------- generar con IA ---------- */
 $("#btn-generar").addEventListener("click", async () => {
   const contenido = texto.value.trim();
@@ -474,9 +494,10 @@ $("#btn-generar").addEventListener("click", async () => {
     const json = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(json.error || `Error ${r.status}`);
     datos = normalizar(json);
+    const n = colocarReferencias(json);
     firmaRevisada = null;
     render();
-    aviso("¡Listo! Corrige con un clic lo que quieras y pulsa «Revisar con IA» antes de descargar.", "ok");
+    aviso("¡Listo! Corrige con un clic lo que quieras y pulsa «Revisar con IA» antes de descargar." + textoFotos(n), "ok");
   } catch (err) {
     aviso(err.message || "No se pudo generar la infografía.", "error");
   } finally {
@@ -526,15 +547,18 @@ $("#btn-copiar").addEventListener("click", async () => {
 $("#btn-pegar").addEventListener("click", () => {
   const r = $("#respuesta").value.trim();
   if (!r) return aviso("Falta la respuesta de Claude: cópiala de claude.ai y pégala en el paso 3.", "error");
+  let n = 0;
   try {
-    datos = normalizar(extraerJSON(r));
+    const crudo = extraerJSON(r);
+    datos = normalizar(crudo);
+    n = colocarReferencias(crudo);
   } catch (err) {
     return aviso(`No pude leer la respuesta (${err.message}). Asegúrate de copiar la respuesta COMPLETA de Claude, incluido el bloque \`\`\`json.`, "error");
   }
   render();
   $("#respuesta").value = "";
   if (innerWidth < 1024) $("#marco").scrollIntoView({ behavior: "smooth" });
-  aviso("✅ Infografía creada. Haz clic en los textos para corregirlos, añade fotos si quieres y pulsa «Descargar PNG».", "ok");
+  aviso("✅ Infografía creada. Haz clic en los textos para corregirlos y pulsa «Descargar PNG»." + textoFotos(n), "ok");
 });
 
 $("#btn-add-seccion").addEventListener("click", () => {
